@@ -23,44 +23,6 @@ struct Tag {
     ancestry: Vec<String>,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Read the ENTS file
-    let ents_content = fs::read_to_string("tags.ents")?;
-    
-    // Parse the file
-    let pairs = EntsParser::parse(Rule::file, &ents_content)?;
-    
-    // Process the parsed content
-    let mut tags = Vec::new();
-    let mut aliases = HashMap::new();
-    
-    // Track indentation levels and current tags at each level
-    let mut level_tags: Vec<Vec<Tag>> = vec![Vec::new()];
-    
-    for pair in pairs {
-        match pair.as_rule() {
-            Rule::file => {
-                // Process the tags in the file
-                for tag_pair in pair.into_inner() {
-                    if tag_pair.as_rule() == Rule::tag {
-                        process_tag(tag_pair, &mut level_tags, &mut aliases);
-                    }
-                }
-                
-                // The root tags are at level 0
-                tags = level_tags[0].clone();
-            }
-            _ => {}
-        }
-    }
-    
-    // Print the parsed result
-    println!("{:#?}", tags);
-    println!("Aliases: {:#?}", aliases);
-    
-    Ok(())
-}
-
 fn process_tag(
     tag_pair: pest::iterators::Pair<Rule>,
     level_tags: &mut Vec<Vec<Tag>>,
@@ -138,3 +100,43 @@ fn process_tag(
         }
     }
 }
+
+
+fn parse_ents() -> Result<(), Box<dyn std::error::Error>> {
+    // Read the ENTS file
+    let ents_content = fs::read_to_string("tags.ents")?;
+    
+    // Parse the file
+    let pairs = EntsParser::parse(Rule::file, &ents_content)?;
+    
+    // Process the parsed content
+    let mut tags = Vec::new();
+    let mut aliases = HashMap::new();
+    
+    // Track indentation levels and current tags at each level
+    let mut level_tags: Vec<Vec<Tag>> = vec![Vec::new()];
+    
+    for pair in pairs {
+        match pair.as_rule() {
+            Rule::file => {
+                // Process the tags in the file
+                for tag_pair in pair.into_inner() {
+                    if tag_pair.as_rule() == Rule::tag {
+                        process_tag(tag_pair, &mut level_tags, &mut aliases);
+                    }
+                }
+                
+                // The root tags are at level 0
+                tags = level_tags[0].clone();
+            }
+            _ => {}
+        }
+    }
+    
+    // Print the parsed result
+    println!("{:#?}", tags);
+    println!("Aliases: {:#?}", aliases);
+    
+    Ok(())
+}
+

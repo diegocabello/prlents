@@ -1,24 +1,27 @@
-use serde::{Serialize, Deserialize};
-use std::fs;
 use std::path::Path;
 use std::error::Error;
-use std::collections::{HashMap, HashSet};
 use std::env;
+
+mod common;
 mod relationship;
+//mod merge_tags;
+
+use crate::common::{TagType, EntsTag, TagsFile};
 
 use relationship::{
-    TagType, EntsTag, TagsFile, Operation, 
+    //TagType, EntsTag, TagsFile, Operation, 
+    Operation, 
     is_visible_tag, read_tags_from_json, save_tags_to_json,
     assign_bidir_file_tag_rel, filter_command, represent_inspect
 };
 
-use merge_tags::{merge_tags_files}
+//use merge_tags::{merge_tags_files}
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
     
     if args.len() < 3 {
-        println!("Usage: orlents <ttf|ftt|fil> [(<add|remove|show> <monad> <opt1> <opt2> ...) | (<tag1> <tag2> ...)]");
+        println!("Usage: prlents <ttf|ftt|fil> [(<add|remove|show> <monad> <opt1> <opt2> ...) | (<tag1> <tag2> ...)]");
         return Ok(());
     }
 
