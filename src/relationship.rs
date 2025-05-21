@@ -1,9 +1,9 @@
-use std::fs;
-use std::path::Path;
 use std::error::Error;
 use std::collections::{HashSet};
+use std::os::unix::fs::MetadataExt;
 
-use crate::common::{TagType, EntsTag, TagsFile};
+use crate::common::{TagType, EntsTag, TagsFile, FileData, save_tags_to_json};
+use crate::handle_file::{handle_file, find_filename_by_inode};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Operation {
@@ -26,24 +26,17 @@ pub fn is_visible_tag(tag: &EntsTag) -> bool {
     tag.show.unwrap_or(true)
 }
 
-pub fn read_tags_from_json() -> Result<TagsFile, Box<dyn Error>> {
-    let json_content = fs::read_to_string("tags.json")?;
-    let tags_file: TagsFile = serde_json::from_str(&json_content)?;
-    Ok(tags_file)
-}
-
-pub fn save_tags_to_json(tags_file: &TagsFile) -> Result<(), Box<dyn Error>> {
-    let json_content = serde_json::to_string_pretty(tags_file)?;
-    fs::write("tags.json", json_content)?;
-    Ok(())
-}
-
 pub fn assign_bidir_file_tag_rel(
-    file: &str, 
+    file_name: &str, 
     tag: &str, 
     operation: Operation, 
     tags_file: &mut TagsFile
 ) -> Result<(), Box<dyn Error>> {
+
+    // Look up the inode early to avoid borrowing conflicts
+    let file_inode = handle_file(file_name, tags_file)?;
+    let file_inode_str = file_inode.to_string();
+
     // Resolve the actual tag name from aliases
     let display_tag_name = match tags_file.aliases.get(tag) {
         Some(actual_name) => actual_name,
@@ -64,12 +57,6 @@ pub fn assign_bidir_file_tag_rel(
 
     match operation {
         Operation::Add => {
-            // Check if file exists
-            if !Path::new(file).exists() {
-                println!("file does not exist: {}", file);
-                return Ok(());
-            }
-            
             let foo = &tags_file.tags[foo_index];
             
             match foo.tag_type {
@@ -78,34 +65,32 @@ pub fn assign_bidir_file_tag_rel(
                     return Ok(());
                 },
                 TagType::Exclusive => {
-                    let bar = single_inspect(tags_file, file)?;
+                    let bar = single_inspect(tags_file, &file_inode_str)?;
                     let (_, qux) = collect_tags_recursively(tag, tags_file)?;
                     let common_elements: HashSet<_> = bar.intersection(&qux).cloned().collect();
                     
                     if !common_elements.is_empty() {
-
                         let elements_str = common_elements.iter()
                             .map(|s| s.as_str())
                             .collect::<Vec<&str>>()
                             .join(", ");
                             
                         println!("cannot assign exclusive tag {} to file {} due to children {}", 
-                            tag, file, elements_str);
+                            tag, file_name, elements_str);
                         return Ok(());
                     }
                 },
 
                 TagType::Normal => {
-                    let bar = single_inspect(tags_file, file)?;
+                    let bar = single_inspect(tags_file, &file_inode_str)?;
                     let ancestry_set: HashSet<String> = foo.ancestry.iter().cloned().collect();
                     let common_elements: HashSet<_> = ancestry_set.intersection(&bar).cloned().collect();
                     
                     if !common_elements.is_empty() {
-
                         let ancestor_tag = common_elements.iter().next().unwrap();
 
                         println!("cannot assign normal tag {} to file {} due to it having been assigned ancestor exclusive tag {}", 
-                            tag, file, ancestor_tag);
+                            tag, file_name, ancestor_tag);
                         return Ok(());
                     }
                 }
@@ -114,25 +99,26 @@ pub fn assign_bidir_file_tag_rel(
             // Add file to tag's files if not already present
             let foo = &mut tags_file.tags[foo_index];
             let files = foo.files.get_or_insert_with(Vec::new);
-            if !files.contains(&file.to_string()) {
-                files.push(file.to_string());
-                println!("assigned  file, tag: \t{} \t{}", file, display_tag_name);
+
+            if !files.contains(&file_inode_str) {
+                files.push(file_inode_str);
+                println!("assigned  file, tag: \t{} \t{}", file_name, display_tag_name);
             } else {
-                println!("pre-exist file, tag: \t{} \t{}", file, display_tag_name);
+                println!("pre-exist file, tag: \t{} \t{}", file_name, display_tag_name);
             }
         },
         Operation::Remove => {
             // Remove file from tag's files if present
             let foo = &mut tags_file.tags[foo_index];
             if let Some(files) = &mut foo.files {
-                if let Some(pos) = files.iter().position(|f| f == file) {
+                if let Some(pos) = files.iter().position(|f| *f == file_inode_str) {
                     files.remove(pos);
-                    println!("removed file, tag: \t{} \t{}", file, tag);
+                    println!("removed file, tag: \t{} \t{}", file_name, tag);
                 } else {
-                    println!("there is no correlation between file '{}' and tag '{}'", file, display_tag_name);
+                    println!("there is no correlation between file '{}' and tag '{}'", file_name, display_tag_name);
                 }
             } else {
-                println!("there is no correlation between file '{}' and tag '{}'", file, display_tag_name);
+                println!("there is no correlation between file '{}' and tag '{}'", file_name, display_tag_name);
             }
         },
         Operation::Unknown => {
@@ -198,14 +184,110 @@ fn collect_tags_recursively(tag_name: &str, tags_file: &TagsFile)
     Ok((normal_and_duds_set, normal_tags_set))
 }
 
-fn single_inspect(tags_file: &TagsFile, file: &str) -> Result<HashSet<String>, Box<dyn Error>> {
+
+pub fn filter_command(tags_file: &mut TagsFile, tags: &[String]) -> Result<Vec<String>, Box<dyn Error>> {
+    
+    let mut all_normal_tags = HashSet::new();
+    
+    for tag in tags {
+        let (_, normal_tags_set) = collect_tags_recursively(tag, tags_file)?;
+        all_normal_tags.extend(normal_tags_set);
+    }
+    
+    let mut unique_inodes = HashSet::new();
+    for tag_name in &all_normal_tags {
+        if let Some(tag_obj) = tags_file.tags.iter()
+            .find(|tag| tag.name == *tag_name && is_visible_tag(tag)) {
+            if let Some(files) = &tag_obj.files {
+                unique_inodes.extend(files.iter().cloned());
+            }
+        }
+    }
+    
+    // Track whether we need to save changes
+    let mut needs_save = false;
+    
+    // Convert inodes to filenames and update last_known_name if needed
+    let mut result: Vec<String> = Vec::new();
+    
+    for inode_str in &unique_inodes {
+        // Convert string to u64 inode
+        if let Ok(inode) = inode_str.parse::<u64>() {
+            // Look up current filename by inode using the file system
+            match find_filename_by_inode(inode)? {
+                Some(current_path) => {
+                    // Found the file in the file system, check if we need to update the last_known_name
+                    let position = tags_file.files.iter().position(|file_data| file_data.file_inode == inode);
+                    
+                    match position {
+                        Some(pos) => {
+                            // File exists in our registry, check if name needs updating
+                            if tags_file.files[pos].last_known_name != current_path {
+                                //println!("Updating file path: {} -> {}", tags_file.files[pos].last_known_name, current_path);
+                                tags_file.files[pos].last_known_name = current_path.clone();
+                                needs_save = true;
+                            }
+                            result.push(current_path);
+                        },
+                        None => {
+                            // File inode exists but not in our registry - this shouldn't happen
+                            // but we'll add it to be safe
+                            println!("Warning: file with inode {} found in tags but not in file registry", inode);
+                            // Add the file to registry
+                            let parent_path = std::path::Path::new(&current_path).parent().unwrap_or(std::path::Path::new("."));
+                            let parent_path = if parent_path.as_os_str().is_empty() {
+                                std::path::Path::new(".")
+                            } else {
+                                parent_path
+                            };
+                            let parent_metadata = std::fs::metadata(parent_path)?;
+                            let parent_dir_inode = parent_metadata.ino();
+                            
+                            tags_file.files.push(FileData {
+                                last_known_name: current_path.clone(),
+                                file_inode: inode,
+                                parent_dir_inode,
+                            });
+                            result.push(current_path);
+                            needs_save = true;
+                        }
+                    }
+                },
+                None => {
+                    // File not found in filesystem - do not include it in results
+                    println!("Warning: File with inode {} not found in filesystem", inode);
+                    // We don't add it to the results since you don't want to show missing files
+                }
+            }
+        }
+    }
+    
+    result.sort();
+    
+    // Save changes to tags.json if needed
+    if needs_save {
+        save_tags_to_json(tags_file)?;
+    }
+    
+    Ok(result)
+}
+
+// Modified to accept inode string directly instead of filename
+fn single_inspect(tags_file: &TagsFile, file_inode_str: &str) -> Result<HashSet<String>, Box<dyn Error>> {
     let mut return_set = HashSet::new();
     
     for tag in &tags_file.tags {
         if is_visible_tag(tag) {
             if let Some(files) = &tag.files {
-                if files.contains(&file.to_string()) {
-                    return_set.insert(tag.name.clone());
+                if files.contains(&file_inode_str.to_string()) {
+                    if !tag.ancestry.is_empty() {
+                        let mut path_parts = tag.ancestry.clone();
+                        path_parts.push(tag.name.clone());
+                        let full_tag_path = path_parts.join("/");
+                        return_set.insert(full_tag_path);
+                    } else {
+                        return_set.insert(tag.name.clone());
+                    }
                 }
             }
         }
@@ -214,35 +296,17 @@ fn single_inspect(tags_file: &TagsFile, file: &str) -> Result<HashSet<String>, B
     Ok(return_set)
 }
 
-pub fn filter_command(tags_file: &TagsFile, tags: &[String]) -> Result<Vec<String>, Box<dyn Error>> {
-    let mut all_normal_tags = HashSet::new();
-    
-    for tag in tags {
-        let (_, normal_tags_set) = collect_tags_recursively(tag, tags_file)?;
-        all_normal_tags.extend(normal_tags_set);
-    }
-    
-    let mut unique_files = HashSet::new();
-    for tag_name in &all_normal_tags {
-        if let Some(tag_obj) = tags_file.tags.iter()
-            .find(|tag| tag.name == *tag_name && is_visible_tag(tag)) {
-            if let Some(files) = &tag_obj.files {
-                unique_files.extend(files.iter().cloned());
-            }
-        }
-    }
-    
-    let mut result: Vec<String> = unique_files.into_iter().collect();
-    result.sort();
-    Ok(result)
-}
-
-pub fn represent_inspect(tags_file: &TagsFile, files: &[String]) -> Result<(), Box<dyn Error>> {
+pub fn represent_inspect(tags_file: &mut TagsFile, files: &[String]) -> Result<(), Box<dyn Error>> {
     let multi_display = files.len() > 1;
     let tab_container = if multi_display { "\t" } else { "" };
 
     for (_count, file) in files.iter().enumerate() {
-        let element = single_inspect(tags_file, file)?;
+        // Look up the inode first
+        let file_inode = handle_file(file, tags_file)?;
+        let file_inode_str = file_inode.to_string();
+        
+        // Then call single_inspect with the inode string
+        let element = single_inspect(tags_file, &file_inode_str)?;
         
         if multi_display {
             let header_length = std::cmp::max(20, file.len() + 5);

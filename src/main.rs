@@ -4,15 +4,16 @@ use std::env;
 
 mod common;
 mod relationship;
+//mod parser;
+mod handle_file; 
 //mod merge_tags;
 
-use crate::common::{TagType, EntsTag, TagsFile};
+//use parser::parse_ents;
+
+use crate::common::{TagType, EntsTag, TagsFile, read_tags_from_json, save_tags_to_json};
 
 use relationship::{
-    //TagType, EntsTag, TagsFile, Operation, 
-    Operation, 
-    is_visible_tag, read_tags_from_json, save_tags_to_json,
-    assign_bidir_file_tag_rel, filter_command, represent_inspect
+    Operation, is_visible_tag, assign_bidir_file_tag_rel, filter_command, represent_inspect
 };
 
 //use merge_tags::{merge_tags_files}
@@ -20,27 +21,58 @@ use relationship::{
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
     
-    if args.len() < 3 {
-        println!("Usage: prlents <ttf|ftt|fil> [(<add|remove|show> <monad> <opt1> <opt2> ...) | (<tag1> <tag2> ...)]");
+    if args.len() < 2 {
+        println!("Usage: prlents <parse|ttf|ftt|filter|inspect> [(<add|remove|show> <monad> <opt1> <opt2> ...) | (<tag1> <tag2> ...)]");
         return Ok(());
     }
 
     let command = &args[1];
-    
-    let mut tags_file = read_tags_from_json()?;
-    
-    
+
     // if command == "process" || command == "parse" {
 
-    // } else 
+    //     let current_dir = std::env::current_dir()?;
+    //     println!("Current working directory: {:?}", current_dir);
+
+    //     let file_path = if args.len() > 2 {
+    //         &args[2]
+    //     } else {
+    //         "tags.ents" // Default if no file specified
+    //     };
+        
+    //     println!("Processing file: {}", file_path);
+    //     match parse_ents(file_path) {
+    //         Ok(parsed_tags_file) => {
+    //             save_tags_to_json(&parsed_tags_file)?;
+    //             println!("Successfully parsed {} and saved to tags.json", file_path);
+    //         },
+    //         Err(e) => {
+    //             println!("Error: {}", e);
+    //             return Err(e);
+    //         }
+    //     }
+    //     return Ok(());
+    // } 
+    
+    if args.len() < 3 {
+        println!("Usage: prlents <parse|ttf|ftt|filter|inspect> [(<add|remove|show> <monad> <opt1> <opt2> ...) | (<tag1> <tag2> ...)]");
+        return Ok(());
+    }    
+    
+    let mut tags_file = match read_tags_from_json() {
+        Ok(tf) => tf,
+        Err(e) => {
+            return Err(e);
+        }
+    };
+    
     if command == "filter" || command == "fil" {
         let tags = args[2..].to_vec();
-        for file in filter_command(&tags_file, &tags)? {
+        for file in filter_command(&mut tags_file, &tags)? {
             println!("{}", file.trim());
         }
     } else if command == "inspect" || command == "insp" {
         let files = args[2..].to_vec();
-        represent_inspect(&tags_file, &files)?;
+        represent_inspect(&mut tags_file, &files)?;
     } else {
         if command != "tagtofiles" && command != "ttf" && command != "filetotags" && command != "ftt" {
             println!("invalid command: {}", command);

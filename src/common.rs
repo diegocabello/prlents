@@ -1,7 +1,10 @@
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
+use std::error::Error;
+use std::fs;
+use std::io;
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub enum TagType {
     #[serde(rename = "normal")]
     Normal,
@@ -11,19 +14,56 @@ pub enum TagType {
     Exclusive,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+// Unified tag structure for both parsing and serialization
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct EntsTag {
     pub name: String,
     #[serde(rename = "type")]
     pub tag_type: TagType,
-    pub children: Vec<String>,
-    pub ancestry: Vec<String>,
+    pub children: Vec<String>, //this is inodes now
+    pub ancestry: Vec<String>, //this is inodes now
     pub show: Option<bool>,
-    pub files: Option<Vec<String>>,
+    pub files: Option<Vec<String>>, //this is inodes now
+    
+    // Fields used during parsing, skipped during serialization
+    #[serde(skip)]
+    pub child_tags: Vec<EntsTag>,
+    #[serde(skip)]
+    pub alias: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FileData {
+    pub last_known_name: String,
+    pub file_inode: u64,
+    pub parent_dir_inode: u64,
+    // pub sha1_hash: [u8; 40],
+    // pub fuzzy_hash: [u8; 70]
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct TagsFile {
+    pub files: Vec<FileData>,
     pub aliases: HashMap<String, String>,
     pub tags: Vec<EntsTag>,
+}
+
+pub fn read_tags_from_json() -> Result<TagsFile, Box<dyn Error>> {
+    match fs::read_to_string("tags.json") {
+        Ok(json_content) => {
+            let tags_file: TagsFile = serde_json::from_str(&json_content)?;
+            Ok(tags_file)
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            println!("Error: tags.json not found. Run 'prlents process tags.ents' to create it.");
+            Ok(TagsFile::default())  
+        },
+        Err(e) => Err(e.into())
+    }
+}
+
+pub fn save_tags_to_json(tags_file: &TagsFile) -> Result<(), Box<dyn Error>> {
+    let json_content = serde_json::to_string_pretty(tags_file)?;
+    fs::write("tags.json", json_content)?;
+    Ok(())
 }
