@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::collections::{HashSet};
 use std::os::unix::fs::MetadataExt;
+use std::path::Path;
 
 use crate::common::{TagType, EntsTag, TagsFile, FileData, save_tags_to_json};
 use crate::handle_file::{handle_file, find_filename_by_inode};
@@ -195,6 +196,7 @@ pub fn filter_command(tags_file: &mut TagsFile, tags: &[String]) -> Result<Vec<S
     }
     
     let mut unique_inodes = HashSet::new();
+
     for tag_name in &all_normal_tags {
         if let Some(tag_obj) = tags_file.tags.iter()
             .find(|tag| tag.name == *tag_name && is_visible_tag(tag)) {
@@ -213,50 +215,32 @@ pub fn filter_command(tags_file: &mut TagsFile, tags: &[String]) -> Result<Vec<S
     for inode_str in &unique_inodes {
         // Convert string to u64 inode
         if let Ok(inode) = inode_str.parse::<u64>() {
-            // Look up current filename by inode using the file system
-            match find_filename_by_inode(inode)? {
-                Some(current_path) => {
-                    // Found the file in the file system, check if we need to update the last_known_name
-                    let position = tags_file.files.iter().position(|file_data| file_data.file_inode == inode);
-                    
-                    match position {
-                        Some(pos) => {
+
+            // if it finds the inode
+            if let Some((position, file_data)) = tags_file.files.iter().enumerate().find(|(_, file_data)| file_data.file_inode == inode) {
+                let last_known_name = &file_data.last_known_name;
+                // and if the last known file there
+                if Path::new(last_known_name).is_file() {
+                    result.push(last_known_name.clone());
+                // if the file name changed
+                } else {
+                    // Look up current filename by inode using the file system
+                    match find_filename_by_inode(inode)? {
+                        Some(current_path) => {
                             // File exists in our registry, check if name needs updating
-                            if tags_file.files[pos].last_known_name != current_path {
-                                //println!("Updating file path: {} -> {}", tags_file.files[pos].last_known_name, current_path);
-                                tags_file.files[pos].last_known_name = current_path.clone();
+                            if tags_file.files[position].last_known_name != current_path {
+                                //println!("Updating file path: {} -> {}", tags_file.files[position].last_known_name, current_path);
+                                tags_file.files[position].last_known_name = current_path.clone();
                                 needs_save = true;
                             }
                             result.push(current_path);
                         },
                         None => {
-                            // File inode exists but not in our registry - this shouldn't happen
-                            // but we'll add it to be safe
-                            println!("Warning: file with inode {} found in tags but not in file registry", inode);
-                            // Add the file to registry
-                            let parent_path = std::path::Path::new(&current_path).parent().unwrap_or(std::path::Path::new("."));
-                            let parent_path = if parent_path.as_os_str().is_empty() {
-                                std::path::Path::new(".")
-                            } else {
-                                parent_path
-                            };
-                            let parent_metadata = std::fs::metadata(parent_path)?;
-                            let parent_dir_inode = parent_metadata.ino();
-                            
-                            tags_file.files.push(FileData {
-                                last_known_name: current_path.clone(),
-                                file_inode: inode,
-                                parent_dir_inode,
-                            });
-                            result.push(current_path);
-                            needs_save = true;
+                            // File not found in filesystem - do not include it in results
+                            println!("Warning: File with inode {} not found in filesystem", inode);
+                            // We don't add it to the results since you don't want to show missing files
                         }
                     }
-                },
-                None => {
-                    // File not found in filesystem - do not include it in results
-                    println!("Warning: File with inode {} not found in filesystem", inode);
-                    // We don't add it to the results since you don't want to show missing files
                 }
             }
         }
@@ -273,7 +257,7 @@ pub fn filter_command(tags_file: &mut TagsFile, tags: &[String]) -> Result<Vec<S
 }
 
 // Modified to accept inode string directly instead of filename
-fn single_inspect(tags_file: &TagsFile, file_inode_str: &str) -> Result<HashSet<String>, Box<dyn Error>> {
+fn represent_single_inspect(tags_file: &TagsFile, file_inode_str: &str) -> Result<HashSet<String>, Box<dyn Error>> {
     let mut return_set = HashSet::new();
     
     for tag in &tags_file.tags {
@@ -296,6 +280,22 @@ fn single_inspect(tags_file: &TagsFile, file_inode_str: &str) -> Result<HashSet<
     Ok(return_set)
 }
 
+fn single_inspect(tags_file: &TagsFile, file_inode_str: &str) -> Result<HashSet<String>, Box<dyn Error>> {
+    let mut return_set = HashSet::new();
+    
+    for tag in &tags_file.tags {
+        if is_visible_tag(tag) {
+            if let Some(files) = &tag.files {
+                if files.contains(&file_inode_str.to_string()) {
+                    return_set.insert(tag.name.clone());  // Just the name, not the path
+                }
+            }
+        }
+    }
+    
+    Ok(return_set)
+}
+
 pub fn represent_inspect(tags_file: &mut TagsFile, files: &[String]) -> Result<(), Box<dyn Error>> {
     let multi_display = files.len() > 1;
     let tab_container = if multi_display { "\t" } else { "" };
@@ -306,7 +306,7 @@ pub fn represent_inspect(tags_file: &mut TagsFile, files: &[String]) -> Result<(
         let file_inode_str = file_inode.to_string();
         
         // Then call single_inspect with the inode string
-        let element = single_inspect(tags_file, &file_inode_str)?;
+        let element = represent_single_inspect(tags_file, &file_inode_str)?;
         
         if multi_display {
             let header_length = std::cmp::max(20, file.len() + 5);

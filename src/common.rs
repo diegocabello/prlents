@@ -32,6 +32,34 @@ pub struct EntsTag {
     pub alias: Option<String>,
 }
 
+impl EntsTag {
+    pub fn new(name: String, tag_type: TagType, ancestry: Vec<String>) -> Self {
+        EntsTag {
+            name,
+            tag_type,
+            children: Vec::new(),
+            ancestry,
+            show: Some(true),
+            files: Some(Vec::new()),
+            child_tags: Vec::new(),
+            alias: None,
+        }
+    }
+    
+    // Call this before serialization to convert child_tags to children names
+    pub fn finalize(&mut self) {
+        // Extract children names from child_tags
+        self.children = self.child_tags.iter()
+            .map(|tag| tag.name.clone())
+            .collect();
+        
+        // Recursively finalize children
+        for child in &mut self.child_tags {
+            child.finalize();
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FileData {
     pub last_known_name: String,

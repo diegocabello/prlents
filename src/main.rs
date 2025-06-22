@@ -4,11 +4,11 @@ use std::env;
 
 mod common;
 mod relationship;
-//mod parser;
+mod parser;
 mod handle_file; 
-//mod merge_tags;
+mod merge_tags;
 
-//use parser::parse_ents;
+use parser::parse_ents;
 
 use crate::common::{TagType, EntsTag, TagsFile, read_tags_from_json, save_tags_to_json};
 
@@ -16,7 +16,7 @@ use relationship::{
     Operation, is_visible_tag, assign_bidir_file_tag_rel, filter_command, represent_inspect
 };
 
-//use merge_tags::{merge_tags_files}
+use merge_tags::merge_tags;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
@@ -28,32 +28,36 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let command = &args[1];
 
-    // if command == "process" || command == "parse" {
+    if command == "merge" {
+        merge_tags("temp_tags.json", "tags.json")?;
+        return Ok(());
+    }
 
-    //     let current_dir = std::env::current_dir()?;
-    //     println!("Current working directory: {:?}", current_dir);
+    if command == "process" || command == "parse" {
+        let current_dir = std::env::current_dir()?;
+        println!("Current working directory: {:?}", current_dir);
 
-    //     let file_path = if args.len() > 2 {
-    //         &args[2]
-    //     } else {
-    //         "tags.ents" // Default if no file specified
-    //     };
+        let file_path = if args.len() > 2 {
+            &args[2]
+        } else {
+            "tags.ents" // Default if no file specified
+        };
         
-    //     println!("Processing file: {}", file_path);
-    //     match parse_ents(file_path) {
-    //         Ok(parsed_tags_file) => {
-    //             save_tags_to_json(&parsed_tags_file)?;
-    //             println!("Successfully parsed {} and saved to tags.json", file_path);
-    //         },
-    //         Err(e) => {
-    //             println!("Error: {}", e);
-    //             return Err(e);
-    //         }
-    //     }
-    //     return Ok(());
-    // } 
+        println!("Processing file: {}", file_path);
+        match parse_ents(file_path) {
+            Ok(parsed_tags_file) => {
+                save_tags_to_json(&parsed_tags_file)?;
+                println!("Successfully parsed {} and saved to tags.json", file_path);
+            },
+            Err(e) => {
+                println!("Error: {}", e);
+                return Err(e);
+            }
+        }
+        return Ok(());
+    }
     
-    if args.len() < 3 {
+    if args.len() < 3 && command != "merge" {
         println!("Usage: prlents <parse|ttf|ftt|filter|inspect> [(<add|remove|show> <monad> <opt1> <opt2> ...) | (<tag1> <tag2> ...)]");
         return Ok(());
     }    
