@@ -14,11 +14,11 @@ struct HalfTagsFile {
     tags: Vec<EntsTag>,
 }
 
-pub fn merge_tags(temp_tags_file: &str, output_file: &str) -> Result<(), Box<dyn Error>> {
+pub fn merge_tags(temp_tags_content: String, output_file: &str) -> Result<(), Box<dyn Error>> {
 
 
     // Read the new tags file
-    let temp_tags_content = fs::read_to_string(temp_tags_file)?;
+    //let temp_tags_content = fs::read_to_string(temp_tags_file)?;
 
     let mut temp_tags_data_pre_files: HalfTagsFile = match serde_json::from_str(&temp_tags_content) {
         Ok(data) => data,
@@ -149,13 +149,12 @@ pub fn merge_tags(temp_tags_file: &str, output_file: &str) -> Result<(), Box<dyn
 
     Ok(())
 
-    // // Save the merged data
+    // NOT SURE WHAT THIS IS SUPPOSED TO BE \DOWNARR
+
     // let json_value = serde_json::to_value(&merged_data)?;
     // let formatted_json = pretty_print_json(&json_value)?;
     
-    
     // fs::write("tags.json", formatted_json)?;
-    
     
     // Ok(())
  }

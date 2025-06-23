@@ -123,14 +123,14 @@ fn parse_tag_line(input: &str) -> IResult<&str, ParsedTag> {
     
     let (input, tag_type) = parse_tag_type(input)?;
     let (input, spaces) = parse_spaces1(input)?;
-    // println!("After tag type '{}', found {} spaces",   // ===DEBUG===
-    //     match tag_type {
-    //         TagType::Normal => "-",
-    //         TagType::Dud => "+", 
-    //         TagType::Exclusive => "+-",
-    //     }, 
-    //     spaces.len()
-    // );
+    println!("After tag type '{}', found {} spaces", 
+        match tag_type {
+            TagType::Normal => "-",
+            TagType::Dud => "+", 
+            TagType::Exclusive => "+-",
+        }, 
+        spaces.len()
+    );
     let (input, name) = parse_tag_name(input)?;
     
     // After the tag name, we might have:
@@ -207,7 +207,7 @@ fn parse_ents_file(input: &str) -> IResult<&str, Vec<ParsedTag>> {
         // Try to parse a tag line
         match parse_tag_line(remaining) {
             Ok((rest, tag)) => {
-                //println!("Line {}: Parsed tag '{}' (type: {:?})", line_num, tag.name, tag.tag_type); //debug
+                println!("Line {}: Parsed tag '{}' (type: {:?})", line_num, tag.name, tag.tag_type);
                 tags.push(tag);
                 remaining = rest;
                 
@@ -241,8 +241,7 @@ fn parse_ents_file(input: &str) -> IResult<&str, Vec<ParsedTag>> {
 // Build hierarchy from flat parsed tags
 fn build_hierarchy(parsed_tags: Vec<ParsedTag>) -> (Vec<EntsTag>, HashMap<String, String>) {
     let mut aliases = HashMap::new();
-    let mut all_tags: Vec<EntsTag> = Vec::new();
-    let mut tag_stack: Vec<usize> = Vec::new(); // Stack of indices into all_tags
+    let mut tag_stack: Vec<Vec<EntsTag>> = vec![Vec::new()]; // Stack of tags at each level
     
     for parsed_tag in parsed_tags {
         // Add alias if present
@@ -250,45 +249,71 @@ fn build_hierarchy(parsed_tags: Vec<ParsedTag>) -> (Vec<EntsTag>, HashMap<String
             aliases.insert(alias.clone(), parsed_tag.name.clone());
         }
         
-        // Adjust stack to match current indent level
-        tag_stack.truncate(parsed_tag.indent);
+        // Ensure we have enough levels in our stack
+        while tag_stack.len() <= parsed_tag.indent {
+            tag_stack.push(Vec::new());
+        }
+        
+        // Truncate stack to current level + 1
+        tag_stack.truncate(parsed_tag.indent + 1);
         
         // Calculate ancestry
         let mut ancestry = Vec::new();
-        for &idx in &tag_stack {
-            ancestry.push(all_tags[idx].name.clone());
+        for level in 0..parsed_tag.indent {
+            if let Some(parent) = tag_stack.get(level).and_then(|tags| tags.last()) {
+                ancestry.push(parent.name.clone());
+            }
         }
         
         // Create the tag
-        let mut tag = EntsTag {
-            name: parsed_tag.name.clone(),
-            tag_type: parsed_tag.tag_type,
-            children: Vec::new(),
-            ancestry,
-            show: Some(true),
-            files: None, // Set to None to match Haskell output
-            child_tags: Vec::new(),
-            alias: parsed_tag.alias,
-        };
+        let mut tag = EntsTag::new(parsed_tag.name.clone(), parsed_tag.tag_type, ancestry);
+        tag.alias = parsed_tag.alias;
         
         // Add to parent's children if there is a parent
-        if let Some(&parent_idx) = tag_stack.last() {
-            all_tags[parent_idx].children.push(parsed_tag.name.clone());
+        if parsed_tag.indent > 0 {
+            if let Some(parent_level) = tag_stack.get_mut(parsed_tag.indent - 1) {
+                if let Some(parent) = parent_level.last_mut() {
+                    parent.child_tags.push(tag.clone());
+                    parent.children.push(parsed_tag.name.clone());
+                }
+            }
         }
         
-        // Add tag to all_tags and remember its index
-        let tag_index = all_tags.len();
-        all_tags.push(tag);
-        
-        // Push this tag's index onto the stack for potential children
-        tag_stack.push(tag_index);
+        // Add to current level
+        if let Some(current_level) = tag_stack.get_mut(parsed_tag.indent) {
+            current_level.push(tag);
+        }
     }
     
-    // Return all tags and aliases
-    (all_tags, aliases)
+    // Return root tags (level 0)
+    let root_tags = tag_stack.into_iter().next().unwrap_or_default();
+    (root_tags, aliases)
 }
 
-// Since we're now returning all tags from build_hierarchy, we don't need a separate flatten function
+// Flatten the hierarchy for JSON output
+fn flatten_tags(root_tags: Vec<EntsTag>) -> Vec<EntsTag> {
+    let mut all_tags = Vec::new();
+    
+    fn add_tag_and_children(tag: EntsTag, all_tags: &mut Vec<EntsTag>) {
+        let children = tag.child_tags.clone();
+        
+        // Create a clean tag for output (without child_tags)
+        let mut output_tag = tag;
+        output_tag.child_tags = Vec::new();
+        all_tags.push(output_tag);
+        
+        // Process children
+        for child in children {
+            add_tag_and_children(child, all_tags);
+        }
+    }
+    
+    for tag in root_tags {
+        add_tag_and_children(tag, &mut all_tags);
+    }
+    
+    all_tags
+}
 
 // Main parse function that returns a TagsFile
 pub fn parse_ents(file_path: &str) -> Result<TagsFile, Box<dyn Error>> {
@@ -297,6 +322,10 @@ pub fn parse_ents(file_path: &str) -> Result<TagsFile, Box<dyn Error>> {
     
     // Normalize line endings to \n
     let normalized_content = content.replace("\r\n", "\n").replace("\r", "\n");
+    
+    // Debug: print first few lines
+    println!("First 200 chars of normalized content:");
+    println!("{:?}", &normalized_content.chars().take(200).collect::<String>());
     
     // Parse the content
     let (remaining, parsed_tags) = parse_ents_file(&normalized_content)
@@ -310,7 +339,10 @@ pub fn parse_ents(file_path: &str) -> Result<TagsFile, Box<dyn Error>> {
     println!("Parsed {} tags", parsed_tags.len());
     
     // Build hierarchy and extract aliases
-    let (all_tags, aliases) = build_hierarchy(parsed_tags);
+    let (root_tags, aliases) = build_hierarchy(parsed_tags);
+    
+    // Flatten for output
+    let all_tags = flatten_tags(root_tags);
     
     // Create and return the TagsFile
     Ok(TagsFile {

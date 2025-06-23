@@ -28,14 +28,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let command = &args[1];
 
-    if command == "merge" {
-        merge_tags("temp_tags.json", "tags.json")?;
-        return Ok(());
-    }
+    // if command == "merge" {
+    //     merge_tags("temp_tags.json", "tags.json")?;
+    //     return Ok(());
+    // }
 
     if command == "process" || command == "parse" {
         let current_dir = std::env::current_dir()?;
-        println!("Current working directory: {:?}", current_dir);
+        //println!("Current working directory: {:?}", current_dir);
 
         let file_path = if args.len() > 2 {
             &args[2]
@@ -43,10 +43,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             "tags.ents" // Default if no file specified
         };
         
-        println!("Processing file: {}", file_path);
+        //println!("Processing file: {}", file_path);
         match parse_ents(file_path) {
             Ok(parsed_tags_file) => {
-                save_tags_to_json(&parsed_tags_file)?;
+                let parsed_obj = &parsed_tags_file;
+                let json_content = serde_json::to_string_pretty(parsed_obj)?;
+
+                merge_tags(json_content, "tags.json");
+
                 println!("Successfully parsed {} and saved to tags.json", file_path);
             },
             Err(e) => {
