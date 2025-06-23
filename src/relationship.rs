@@ -88,11 +88,20 @@ pub fn assign_bidir_file_tag_rel(
                     let common_elements: HashSet<_> = ancestry_set.intersection(&bar).cloned().collect();
                     
                     if !common_elements.is_empty() {
-                        let ancestor_tag = common_elements.iter().next().unwrap();
-
-                        println!("cannot assign normal tag {} to file {} due to it having been assigned ancestor exclusive tag {}", 
-                            tag, file_name, ancestor_tag);
-                        return Ok(());
+                        // Check if any of the common ancestors are actually exclusive tags
+                        for ancestor_name in &common_elements {
+                            // Find the ancestor tag and check its type
+                            if let Some(ancestor_tag) = tags_file.tags.iter().find(|t| 
+                                t.name == *ancestor_name && is_visible_tag(t)) {
+                                
+                                if ancestor_tag.tag_type == TagType::Exclusive {
+                                    println!("cannot assign normal tag {} to file {} due to it having been assigned ancestor exclusive tag {}", 
+                                        tag, file_name, ancestor_name);
+                                    return Ok(());
+                                }
+                            }
+                        }
+                        // If we get here, none of the ancestors are exclusive tags, so assignment is allowed
                     }
                 }
             }
