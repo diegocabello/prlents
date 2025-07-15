@@ -7,8 +7,10 @@ mod relationship;
 mod parser;
 mod handle_file; 
 mod merge_tags;
+mod options;
 
 use parser::parse_ents;
+use options::Args;
 
 use crate::common::{TagType, EntsTag, TagsFile, read_tags_from_json, save_tags_to_json};
 
@@ -19,31 +21,27 @@ use relationship::{
 use merge_tags::merge_tags;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let args: Vec<String> = env::args().collect();
-    
-    if args.len() < 2 {
+
+    let raw_args: Vec<String> = env::args().collect();
+
+    if raw_args.len() < 2 {
         println!("Usage: prlents <parse|ttf|ftt|filter|inspect> [(<add|remove|show> <monad> <opt1> <opt2> ...) | (<tag1> <tag2> ...)]");
         return Ok(());
     }
+    
+    let args: Args = argh::from_env();
 
-    let command = &args[1];
-
-    // if command == "merge" {
-    //     merge_tags("temp_tags.json", "tags.json")?;
-    //     return Ok(());
-    // }
+    let command = &args.command;
 
     if command == "process" || command == "parse" {
         let current_dir = std::env::current_dir()?;
-        //println!("Current working directory: {:?}", current_dir);
 
-        let file_path = if args.len() > 2 {
-            &args[2]
+        let file_path = if !args.args.is_empty() {
+            &args.args[0]
         } else {
             "tags.ents" // Default if no file specified
         };
         
-        //println!("Processing file: {}", file_path);
         match parse_ents(file_path) {
             Ok(parsed_tags_file) => {
                 let parsed_obj = &parsed_tags_file;
@@ -61,7 +59,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     
-    if args.len() < 3 && command != "merge" {
+    if args.args.is_empty() && command != "merge" {
         println!("Usage: prlents <parse|ttf|ftt|filter|inspect> [(<add|remove|show> <monad> <opt1> <opt2> ...) | (<tag1> <tag2> ...)]");
         return Ok(());
     }    
@@ -74,32 +72,30 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     
     if command == "filter" || command == "fil" {
-        let tags = args[2..].to_vec();
-        for file in filter_command(&mut tags_file, &tags)? {
+        for file in filter_command(&mut tags_file, &args.args, args.explicit)? {
             println!("{}", file.trim());
         }
     } else if command == "inspect" || command == "insp" {
-        let files = args[2..].to_vec();
-        represent_inspect(&mut tags_file, &files)?;
+        represent_inspect(&mut tags_file, &args.args)?;
     } else {
         if command != "tagtofiles" && command != "ttf" && command != "filetotags" && command != "ftt" {
             println!("invalid command: {}", command);
             return Ok(());
         }
 
-        if args.len() >= 4 {
-            let operation = Operation::from(&args[2][..]);
+        if args.args.len() >= 2 {
+            let operation = Operation::from(&args.args[0][..]);
             
             match operation {
                 Operation::Unknown => {
-                    println!("invalid operation: {}", args[2]);
+                    println!("invalid operation: {}", args.args[0]);
                     return Ok(());
                 },
                 _ => {}
             }
             
-            let monad = &args[3];
-            let arguments = &args[4..];
+            let monad = &args.args[1];
+            let arguments = &args.args[2..];
             
             if command == "tagtofiles" || command == "ttf" {
                 // Resolve the actual tag name from aliases

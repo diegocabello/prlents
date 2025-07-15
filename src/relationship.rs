@@ -1,6 +1,5 @@
 use std::error::Error;
 use std::collections::{HashSet};
-use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 use crate::common::{TagType, EntsTag, TagsFile, FileData, save_tags_to_json};
@@ -66,9 +65,29 @@ pub fn assign_bidir_file_tag_rel(
                     return Ok(());
                 },
                 TagType::Exclusive => {
-                    let bar = single_inspect(tags_file, &file_inode_str)?;
-                    let (_, qux) = collect_tags_recursively(tag, tags_file)?;
-                    let common_elements: HashSet<_> = bar.intersection(&qux).cloned().collect();
+                    let already_assigned_tags = single_inspect(tags_file, &file_inode_str)?;
+                    let (_, potential_children_tags) = collect_tags_recursively(tag, tags_file)?;
+                    let ancestry_set: HashSet<String> = foo.ancestry.iter().cloned().collect();
+
+                    let alt_common_elements: HashSet<_> = already_assigned_tags.intersection(&ancestry_set).cloned().collect();
+
+                    if !alt_common_elements.is_empty() {
+                        // Check if any of the common ancestors are actually exclusive tags
+                        for ancestor_name in &alt_common_elements {
+                            // Find the ancestor tag and check its type
+                            if let Some(ancestor_tag) = tags_file.tags.iter().find(|t| 
+                                t.name == *ancestor_name && is_visible_tag(t)) {
+                                
+                                if ancestor_tag.tag_type == TagType::Exclusive {
+                                    println!("cannot assign exclusive tag {} to file {} due to it having been assigned ancestor exclusive tag {}", 
+                                        tag, file_name, ancestor_name);
+                                    return Ok(());
+                                }
+                            }
+                        }
+                    }
+
+                    let common_elements: HashSet<_> = already_assigned_tags.intersection(&potential_children_tags).cloned().collect();
                     
                     if !common_elements.is_empty() {
                         let elements_str = common_elements.iter()
@@ -83,9 +102,9 @@ pub fn assign_bidir_file_tag_rel(
                 },
 
                 TagType::Normal => {
-                    let bar = single_inspect(tags_file, &file_inode_str)?;
+                    let already_assigned_tags = single_inspect(tags_file, &file_inode_str)?;
                     let ancestry_set: HashSet<String> = foo.ancestry.iter().cloned().collect();
-                    let common_elements: HashSet<_> = ancestry_set.intersection(&bar).cloned().collect();
+                    let common_elements: HashSet<_> = ancestry_set.intersection(&already_assigned_tags).cloned().collect();
                     
                     if !common_elements.is_empty() {
                         // Check if any of the common ancestors are actually exclusive tags
@@ -195,13 +214,17 @@ fn collect_tags_recursively(tag_name: &str, tags_file: &TagsFile)
 }
 
 
-pub fn filter_command(tags_file: &mut TagsFile, tags: &[String]) -> Result<Vec<String>, Box<dyn Error>> {
+pub fn filter_command(tags_file: &mut TagsFile, tags: &[String], explicit: bool) -> Result<Vec<String>, Box<dyn Error>> {
     
     let mut all_normal_tags = HashSet::new();
     
     for tag in tags {
-        let (_, normal_tags_set) = collect_tags_recursively(tag, tags_file)?;
-        all_normal_tags.extend(normal_tags_set);
+        if !explicit {
+            let (_, normal_tags_set) = collect_tags_recursively(tag, tags_file)?;
+            all_normal_tags.extend(normal_tags_set);
+        } else {
+            all_normal_tags.extend(tags.iter().cloned());
+        }
     }
     
     let mut unique_inodes = HashSet::new();

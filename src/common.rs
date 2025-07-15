@@ -2,7 +2,6 @@ use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
-use std::io;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub enum TagType {
