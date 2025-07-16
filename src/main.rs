@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::error::Error;
+use std::collections::HashSet;
 use std::env;
 
 mod common;
@@ -25,7 +26,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let raw_args: Vec<String> = env::args().collect();
 
     if raw_args.len() < 2 {
-        println!("Usage: prlents <parse|ttf|ftt|filter|inspect> [(<add|remove|show> <monad> <opt1> <opt2> ...) | (<tag1> <tag2> ...)]");
+        println!("Usage: prlents <ttf|ftt|fil|int|insp|process>");
         return Ok(());
     }
     
@@ -71,13 +72,37 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     };
     
-    if command == "filter" || command == "fil" {
+    if command == "filter" || command == "fil" || command == "union" || command == "un" {
         for file in filter_command(&mut tags_file, &args.args, args.explicit)? {
             println!("{}", file.trim());
         }
 
     } else if command == "inspect" || command == "insp" {
         represent_inspect(&mut tags_file, &args.args)?;
+
+    } else if command == "intersection" || command  == "intersect" || command == "int" {
+        
+        if args.args.len() < 1 {
+            eprintln!("need at least one tag for intersection");
+            std::process::exit(1);
+        } else if args.args.len() == 1 {
+            for file in filter_command(&mut tags_file, &args.args, args.explicit)? {
+                println!("{}", file.trim());
+            }
+            return Ok(())
+        } else {
+
+            let mut result: HashSet<_> = filter_command(&mut tags_file, &[args.args[0].clone()], args.explicit)?.iter().cloned().collect();
+            for tag in &args.args[1..] {
+                let other_result: HashSet<_> = filter_command(&mut tags_file, &[tag.clone()], args.explicit)?.iter().cloned().collect();
+                result = result.intersection(&other_result).cloned().collect();
+            }
+        
+            let vec: Vec<_> = result.into_iter().collect(); 
+            for file in vec {
+                println!("{}", file.trim());
+            }
+        }
 
     } else {
         if command != "tagtofiles" && command != "ttf" && command != "filetotags" && command != "ftt" {
