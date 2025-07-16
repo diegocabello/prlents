@@ -30,7 +30,8 @@ pub fn assign_bidir_file_tag_rel(
     file_name: &str, 
     tag: &str, 
     operation: Operation, 
-    tags_file: &mut TagsFile
+    tags_file: &mut TagsFile,
+    force: bool
 ) -> Result<(), Box<dyn Error>> {
 
     // Look up the inode early to avoid borrowing conflicts
@@ -39,8 +40,8 @@ pub fn assign_bidir_file_tag_rel(
 
     // Resolve the actual tag name from aliases
     let display_tag_name = match tags_file.aliases.get(tag) {
-        Some(actual_name) => actual_name,
-        None => tag,
+        Some(actual_name) => actual_name.to_string(),
+        None => tag.to_string(),
     };
     
     // Find the tag in the tags list
@@ -55,6 +56,8 @@ pub fn assign_bidir_file_tag_rel(
         }
     };
 
+    let mut unassign_message = String::new();
+
     match operation {
         Operation::Add => {
             let foo = &tags_file.tags[foo_index];
@@ -64,6 +67,7 @@ pub fn assign_bidir_file_tag_rel(
                     println!("cannot assign dud tag to files: \t{}", display_tag_name);
                     return Ok(());
                 },
+
                 TagType::Exclusive => {
                     let already_assigned_tags = single_inspect(tags_file, &file_inode_str)?;
                     let (_, potential_children_tags) = collect_tags_recursively(tag, tags_file)?;
@@ -79,9 +83,15 @@ pub fn assign_bidir_file_tag_rel(
                                 t.name == *ancestor_name && is_visible_tag(t)) {
                                 
                                 if ancestor_tag.tag_type == TagType::Exclusive {
-                                    println!("cannot assign exclusive tag {} to file {} due to it having been assigned ancestor exclusive tag {}", 
-                                        tag, file_name, ancestor_name);
-                                    return Ok(());
+                                    if !force {
+                                        println!("cannot assign exclusive tag {} to file {} due to it having been assigned ancestor exclusive tag {}", 
+                                            tag, file_name, ancestor_name);
+                                        return Ok(());
+                                    } else {
+                                        //NEEDS CUSTOM MESSAGE
+                                        assign_bidir_file_tag_rel(file_name, ancestor_name, Operation::Remove, tags_file, false)?;
+                                        unassign_message = format!("and forcefully unassigned ancestor exclusive tag {}", ancestor_name);
+                                    }
                                 }
                             }
                         }
@@ -90,14 +100,29 @@ pub fn assign_bidir_file_tag_rel(
                     let common_elements: HashSet<_> = already_assigned_tags.intersection(&potential_children_tags).cloned().collect();
                     
                     if !common_elements.is_empty() {
-                        let elements_str = common_elements.iter()
-                            .map(|s| s.as_str())
-                            .collect::<Vec<&str>>()
-                            .join(", ");
-                            
-                        println!("cannot assign exclusive tag {} to file {} due to children {}", 
-                            tag, file_name, elements_str);
-                        return Ok(());
+                        let elements_str = common_elements.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
+                        let print_elements_str = elements_str.join(", ");
+
+                        if !force {
+                            if elements_str.len() == 1 && elements_str[0] == display_tag_name {
+                                println!("pre-exist file, tag: \t{} \t{}", file_name, display_tag_name);
+                                return Ok(()) 
+                            } else {
+                                println!("cannot assign exclusive tag {} to file {} due to children {}", 
+                                    tag, file_name, print_elements_str);
+                                return Ok(());
+                            }
+                        } else {
+                            for element in &elements_str {
+                                //NEEDS CUSTOM MESSAGE
+                                assign_bidir_file_tag_rel(file_name, element, Operation::Remove, tags_file, false)?;
+                            }
+                            unassign_message = format!(
+                                "and forcefully unassigned {}{}",
+                                if elements_str.len() == 1 { "child tag " } else { "children tags " },
+                                print_elements_str
+                            ); // parenthasis not brace
+                        }
                     }
                 },
 
@@ -114,9 +139,15 @@ pub fn assign_bidir_file_tag_rel(
                                 t.name == *ancestor_name && is_visible_tag(t)) {
                                 
                                 if ancestor_tag.tag_type == TagType::Exclusive {
-                                    println!("cannot assign normal tag {} to file {} due to it having been assigned ancestor exclusive tag {}", 
-                                        tag, file_name, ancestor_name);
-                                    return Ok(());
+                                    if !force {
+                                        println!("cannot assign normal tag {} to file {} due to it having been assigned ancestor exclusive tag {}", 
+                                            tag, file_name, ancestor_name);
+                                        return Ok(());
+                                    } else {
+                                        //NEEDS CUSTOM MESSAGE
+                                        unassign_message = format!("and forcefully unassigned ancestor exclusive tag {}", ancestor_name);
+                                        assign_bidir_file_tag_rel(file_name, ancestor_name, Operation::Remove, tags_file, false)?;
+                                    }
                                 }
                             }
                         }
@@ -131,18 +162,19 @@ pub fn assign_bidir_file_tag_rel(
 
             if !files.contains(&file_inode_str) {
                 files.push(file_inode_str);
-                println!("assigned  file, tag: \t{} \t{}", file_name, display_tag_name);
+                println!("assigned file, tag: \t{} \t{} {}", file_name, display_tag_name, unassign_message);
             } else {
                 println!("pre-exist file, tag: \t{} \t{}", file_name, display_tag_name);
             }
         },
+
         Operation::Remove => {
             // Remove file from tag's files if present
             let foo = &mut tags_file.tags[foo_index];
             if let Some(files) = &mut foo.files {
                 if let Some(pos) = files.iter().position(|f| *f == file_inode_str) {
                     files.remove(pos);
-                    println!("removed file, tag: \t{} \t{}", file_name, tag);
+                    println!("removed  file, tag: \t{} \t{}", file_name, tag); // there are meant to be two spaces there for text alignment 
                 } else {
                     println!("there is no correlation between file '{}' and tag '{}'", file_name, display_tag_name);
                 }
@@ -150,6 +182,7 @@ pub fn assign_bidir_file_tag_rel(
                 println!("there is no correlation between file '{}' and tag '{}'", file_name, display_tag_name);
             }
         },
+
         Operation::Unknown => {
             println!("invalid operation");
         }

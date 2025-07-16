@@ -59,10 +59,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     
-    if args.args.is_empty() && command != "merge" {
-        println!("Usage: prlents <parse|ttf|ftt|filter|inspect> [(<add|remove|show> <monad> <opt1> <opt2> ...) | (<tag1> <tag2> ...)]");
-        return Ok(());
-    }    
+    // if args.args.is_empty() && command != "merge" {
+    //     println!("Usage: prlents <parse|ttf|ftt|filter|inspect> [(<add|remove|show> <monad> <opt1> <opt2> ...) | (<tag1> <tag2> ...)]");
+    //     return Ok(());
+    // }    
     
     let mut tags_file = match read_tags_from_json() {
         Ok(tf) => tf,
@@ -75,8 +75,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         for file in filter_command(&mut tags_file, &args.args, args.explicit)? {
             println!("{}", file.trim());
         }
+
     } else if command == "inspect" || command == "insp" {
         represent_inspect(&mut tags_file, &args.args)?;
+
     } else {
         if command != "tagtofiles" && command != "ttf" && command != "filetotags" && command != "ftt" {
             println!("invalid command: {}", command);
@@ -114,21 +116,28 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                     
                     for file in arguments {
-                        assign_bidir_file_tag_rel(file, monad, operation, &mut tags_file)?;
+                        assign_bidir_file_tag_rel(file, monad, operation, &mut tags_file, args.force)?;
                     }
                     
                     save_tags_to_json(&tags_file)?;
                 } else {
                     println!("tag does not exist: {}", monad);
                 }
+
             } else if command == "filetotags" || command == "ftt" {
                 if !Path::new(monad).exists() {
                     println!("file does not exist: {}", monad);
                     return Ok(());
                 }
                 
+                if args.force && arguments.len() > 1 {
+                    println!("logic for multiple force tags hasn't been implimented yet");
+                    return Ok(());
+                }
+
+                //if there isn't a tag for this, the "tag does not exist" error message is handled in bidirrel
                 for tag in arguments {
-                    assign_bidir_file_tag_rel(monad, tag, operation, &mut tags_file)?;
+                    assign_bidir_file_tag_rel(monad, tag, operation, &mut tags_file, args.force)?;
                 }
                 
                 save_tags_to_json(&tags_file)?;
