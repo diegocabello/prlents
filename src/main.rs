@@ -46,7 +46,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         match parse_ents(file_path) {
             Ok(parsed_tags_file) => {
                 let parsed_obj = &parsed_tags_file;
-                let json_content = serde_json::to_string_pretty(parsed_obj)?;
+                let mut json_content = serde_json::to_string_pretty(parsed_obj)?; // it needs to be mutable
 
                 merge_tags(json_content, "tags.json");
 
@@ -76,10 +76,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         for file in filter_command(&mut tags_file, &args.args, args.explicit)? {
             println!("{}", file.trim());
         }
-
-    } else if command == "inspect" || command == "insp" {
-        represent_inspect(&mut tags_file, &args.args)?;
-
+    
     } else if command == "intersection" || command  == "intersect" || command == "int" {
         
         if args.args.len() < 1 {
@@ -97,13 +94,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let other_result: HashSet<_> = filter_command(&mut tags_file, &[tag.clone()], args.explicit)?.iter().cloned().collect();
                 result = result.intersection(&other_result).cloned().collect();
             }
-        
+            
             let vec: Vec<_> = result.into_iter().collect(); 
             for file in vec {
                 println!("{}", file.trim());
             }
         }
 
+    } else if command == "inspect" || command == "insp" {
+        represent_inspect(&mut tags_file, &args.args)?;
+        
     } else {
         if command != "tagtofiles" && command != "ttf" && command != "filetotags" && command != "ftt" {
             println!("invalid command: {}", command);
