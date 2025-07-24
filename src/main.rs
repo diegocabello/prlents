@@ -2,6 +2,7 @@ use std::path::Path;
 use std::error::Error;
 use std::collections::HashSet;
 use std::env;
+use std::fs;
 
 mod common;
 mod relationship;
@@ -48,7 +49,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let parsed_obj = &parsed_tags_file;
                 let mut json_content = serde_json::to_string_pretty(parsed_obj)?; // it needs to be mutable
 
-                merge_tags(json_content, "tags.json");
+                if !Path::new("tags.json").exists() {
+                    fs::write("tags.json", json_content + "\n")?;
+                } else {
+                    merge_tags(json_content, "tags.json");
+                }
 
                 println!("Successfully parsed {} and saved to tags.json", file_path);
             },
@@ -58,12 +63,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         return Ok(());
-    }
-    
-    // if args.args.is_empty() && command != "merge" {
-    //     println!("Usage: prlents <parse|ttf|ftt|filter|inspect> [(<add|remove|show> <monad> <opt1> <opt2> ...) | (<tag1> <tag2> ...)]");
-    //     return Ok(());
-    // }    
+    }    
     
     let mut tags_file = match read_tags_from_json() {
         Ok(tf) => tf,
