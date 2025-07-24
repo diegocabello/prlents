@@ -47,7 +47,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         match parse_ents(file_path) {
             Ok(parsed_tags_file) => {
                 let parsed_obj = &parsed_tags_file;
-                let mut json_content = serde_json::to_string_pretty(parsed_obj)?; // it needs to be mutable
+                let json_content = serde_json::to_string_pretty(parsed_obj)?; // it needs to be mutable
 
                 if !Path::new("tags.json").exists() {
                     fs::write("tags.json", json_content + "\n")?;
