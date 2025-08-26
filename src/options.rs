@@ -4,7 +4,7 @@ use argh::FromArgs;
 /// prlents - a tool for parsing and filtering
 pub struct Args {
     /// enable explicit mode
-    #[argh(switch, short = 'e', long = "explict")]
+    #[argh(switch, short = 'e', long = "explicit")]
     pub explicit: bool,
     
     /// enable force mode
