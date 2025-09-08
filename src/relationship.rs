@@ -361,7 +361,7 @@ fn single_inspect(tags_file: &TagsFile, file_inode_str: &str) -> Result<HashSet<
     Ok(return_set)
 }
 
-pub fn represent_inspect(tags_file: &mut TagsFile, files: &[String]) -> Result<(), Box<dyn Error>> {
+pub fn represent_inspect(tags_file: &mut TagsFile, files: &[String], quiet: bool) -> Result<(), Box<dyn Error>> {
     let multi_display = files.len() > 1;
     let tab_container = if multi_display { "\t" } else { "" };
 
@@ -371,15 +371,19 @@ pub fn represent_inspect(tags_file: &mut TagsFile, files: &[String]) -> Result<(
         let file_inode_str = file_inode.to_string();
         
         // Then call single_inspect with the inode string
-        let element = represent_single_inspect(tags_file, &file_inode_str)?;
+        let elements_set = represent_single_inspect(tags_file, &file_inode_str)?;
         
+        if (elements_set.is_empty() && quiet) {
+            continue;
+        }
+
         if multi_display {
             let header_length = std::cmp::max(20, file.len() + 5);
             let padding = header_length - file.len();
             println!("\n====={}{}=", file, "=".repeat(padding));
         }
 
-        for tag in element {
+        for tag in elements_set {
             println!("{}{}", tab_container, tag);
         }
     }

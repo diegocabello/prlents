@@ -3,6 +3,8 @@ use std::error::Error;
 use std::collections::HashSet;
 use std::env;
 use std::fs;
+use std::ffi::CString;
+use std::os::raw::c_char;
 
 mod common;
 mod relationship;
@@ -22,9 +24,50 @@ use relationship::{
 
 use merge_tags::merge_tags;
 
-fn main() -> Result<(), Box<dyn Error>> {
+// External C functions
+extern "C" {
+    fn print_bash_functions();
+    fn print_zsh_functions();
+    fn getenv(name: *const c_char) -> *const c_char;
+}
 
+fn print_shell_functions() {
+    unsafe {
+        let shell_var = CString::new("SHELL").expect("CString::new failed");
+        let shell_ptr = getenv(shell_var.as_ptr());
+        
+        if shell_ptr.is_null() {
+            println!("# Could not detect shell, showing both versions\n");
+            print_bash_functions();
+            println!("\n");
+            print_zsh_functions();
+            return;
+        }
+        
+        let shell = std::ffi::CStr::from_ptr(shell_ptr)
+            .to_str()
+            .unwrap_or("");
+        
+        if shell.contains("bash") {
+            print_bash_functions();
+        } else if shell.contains("zsh") {
+            print_zsh_functions();
+        } else {
+            println!("# Unknown shell: {}", shell);
+            println!("# Showing bash version as default\n");
+            print_bash_functions();
+        }
+    }
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
     let raw_args: Vec<String> = env::args().collect();
+    
+    // Check if --eval-shell is present before parsing args
+    if raw_args.iter().any(|arg| arg == "--eval-shell") {
+        print_shell_functions();
+        return Ok(());
+    }
 
     if raw_args.len() < 2 {
         println!("Usage: prlents <ttf|ftt|fil|int|insp|process>");
@@ -32,6 +75,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     
     let args: Args = argh::from_env();
+
+    // This shouldn't be reached due to early return above, but for safety
+    if args.eval_shell {
+        print_shell_functions();
+        return Ok(());
+    }
 
     let command = &args.command;
 
@@ -102,7 +151,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
     } else if command == "inspect" || command == "insp" {
-        represent_inspect(&mut tags_file, &args.args)?;
+        represent_inspect(&mut tags_file, &args.args, args.quiet)?;
         
     } else {
         if command != "tagtofiles" && command != "ttf" && command != "filetotags" && command != "ftt" {
