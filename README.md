@@ -8,6 +8,10 @@
 
 `cargo install --git https://github.com/diegocabello/prlents`
 
+## Shell Commands
+
+Works for bash and zsh. Put `source <(prlents --eval-shell)` in your ~/.bashrc or ~/.zshrc file
+
 ## Video
 
 [https://youtu.be/0RFOaDUuKsE](https://youtu.be/0RFOaDUuKsE?si=5kqbARb4XQNCfTNd)
