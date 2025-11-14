@@ -5,7 +5,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use jwalk::WalkDir;
 use file_id::get_file_id;
-use crate::common::{TagsFile, FileData};
+use crate::common::{TagsFile, FileData, path_to_portable_string};
 
 /// Get a cross-platform file identifier as u64
 /// On Unix: uses inode number
@@ -26,23 +26,26 @@ struct FileLocation {
 }
 
 pub fn handle_file(file_path: &str, jf: &mut TagsFile) -> Result<u64, Box<dyn Error>> {
+    // Normalize input path to use forward slashes for comparison
+    let normalized_file_path = file_path.replace('\\', "/");
+
     if jf.files.is_empty() {
         jf.files = Vec::new();
     }
-    
-    if let Some(existing_file) = jf.files.iter().find(|file| file.last_known_name == file_path) { 
+
+    if let Some(existing_file) = jf.files.iter().find(|file| file.last_known_name == normalized_file_path) { 
         return Ok(existing_file.file_inode);
     }
     
     match find_file_with_inodes(file_path)? {
         Some(location) => {
-            let file_inode = location.file_inode;    
+            let file_inode = location.file_inode;
             if let Some(position) = jf.files.iter().position(|file| file.file_inode == location.file_inode) {
-                jf.files[position].last_known_name = location.path.to_string_lossy().to_string();
+                jf.files[position].last_known_name = path_to_portable_string(&location.path);
                 jf.files[position].parent_dir_inode = location.parent_dir_inode;
             } else {
                 let new_file = FileData {
-                    last_known_name: location.path.to_string_lossy().to_string(),
+                    last_known_name: path_to_portable_string(&location.path),
                     file_inode: location.file_inode,
                     parent_dir_inode: location.parent_dir_inode,
                 };
@@ -167,7 +170,7 @@ pub fn find_filename_by_inode(target_inode: u64) -> Result<Option<String>, Box<d
                         // Check if this is the file we're looking for
                         if file_inode == target_inode {
                             //println!("Found matching file: {:?}", path);
-                            return Ok(Some(path.to_string_lossy().to_string()));
+                            return Ok(Some(path_to_portable_string(&path)));
                         }
                     },
                     Err(e) => {

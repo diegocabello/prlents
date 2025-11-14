@@ -2,7 +2,7 @@ use std::error::Error;
 use std::collections::{HashSet};
 use std::path::Path;
 
-use crate::common::{TagType, EntsTag, TagsFile, FileData, save_tags_to_json};
+use crate::common::{TagType, EntsTag, TagsFile, FileData, save_tags_to_json, path_to_portable_string};
 use crate::handle_file::{handle_file, find_filename_by_inode};
 
 #[derive(Debug, Clone, Copy)]

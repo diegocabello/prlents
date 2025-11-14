@@ -2,6 +2,13 @@ use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
+use std::path::Path;
+
+/// Convert a Path to a String with forward slashes, regardless of platform
+/// This ensures the JSON database is portable across Windows and Unix systems
+pub fn path_to_portable_string(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub enum TagType {
