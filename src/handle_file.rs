@@ -1,9 +1,23 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::error::Error;
-use std::os::unix::fs::MetadataExt;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use jwalk::WalkDir;
+use file_id::get_file_id;
 use crate::common::{TagsFile, FileData};
+
+/// Get a cross-platform file identifier as u64
+/// On Unix: uses inode number
+/// On Windows: uses volume serial + file index, hashed to u64
+fn get_file_identifier(path: &Path) -> Result<u64, Box<dyn Error>> {
+    let file_id = get_file_id(path)?;
+
+    // Hash the FileId to get a consistent u64
+    let mut hasher = DefaultHasher::new();
+    file_id.hash(&mut hasher);
+    Ok(hasher.finish())
+}
 
 struct FileLocation {
     path: PathBuf,
@@ -46,9 +60,8 @@ fn find_file_with_inodes(file_path: &str) -> Result<Option<FileLocation>, Box<dy
     let path = Path::new(file_path);
     
     if path.exists() {
-        let file_metadata = fs::metadata(path)?;
-        let file_inode = file_metadata.ino();
-        
+        let file_inode = get_file_identifier(path)?;
+
         // Fix for empty parent path - always use "." for current directory
         let parent_path = if let Some(parent) = path.parent() {
             if parent.as_os_str().is_empty() {
@@ -59,9 +72,8 @@ fn find_file_with_inodes(file_path: &str) -> Result<Option<FileLocation>, Box<dy
         } else {
             Path::new(".")
         };
-        
-        let parent_metadata = fs::metadata(parent_path)?;
-        let parent_dir_inode = parent_metadata.ino();
+
+        let parent_dir_inode = get_file_identifier(parent_path)?;
         
         let current_dir = std::env::current_dir()?;
         let relative_path = if path.is_absolute() {
@@ -91,9 +103,8 @@ fn find_file_with_inodes(file_path: &str) -> Result<Option<FileLocation>, Box<dy
             Ok(entry) => {
                 if entry.file_name.eq_ignore_ascii_case(file_name) {
                     let found_path = entry.path();
-                    let file_metadata = fs::metadata(&found_path)?;
-                    let file_inode = file_metadata.ino();
-                    
+                    let file_inode = get_file_identifier(&found_path)?;
+
                     // Same fix for parent path
                     let parent_path = if let Some(parent) = found_path.parent() {
                         if parent.as_os_str().is_empty() {
@@ -104,9 +115,8 @@ fn find_file_with_inodes(file_path: &str) -> Result<Option<FileLocation>, Box<dy
                     } else {
                         Path::new(".")
                     };
-                    
-                    let parent_metadata = fs::metadata(parent_path)?;
-                    let parent_dir_inode = parent_metadata.ino();
+
+                    let parent_dir_inode = get_file_identifier(parent_path)?;
                     
                     let current_dir = std::env::current_dir()?;
                     let relative_path = if found_path.is_absolute() {
@@ -151,11 +161,9 @@ pub fn find_filename_by_inode(target_inode: u64) -> Result<Option<String>, Box<d
                 // Get the full path
                 let path = entry.path();
                 
-                // Get metadata to check inode
-                match std::fs::metadata(&path) {
-                    Ok(metadata) => {
-                        let file_inode = metadata.ino();
-                        
+                // Get file identifier to check
+                match get_file_identifier(&path) {
+                    Ok(file_inode) => {
                         // Check if this is the file we're looking for
                         if file_inode == target_inode {
                             //println!("Found matching file: {:?}", path);
