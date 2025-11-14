@@ -8,7 +8,7 @@ use std::env;
 use std::string::FromUtf8Error;
 use crate::common::{TagType, EntsTag, TagsFile, FileData};
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct HalfTagsFile {
     aliases: HashMap<String, String>,
     tags: Vec<EntsTag>,

@@ -18,20 +18,20 @@ use crate::common::{TagType, EntsTag, TagsFile};
 #[derive(Debug, Clone)]
 struct ParsedTag {
     indent: usize,      // Indentation level (0, 1, 2, etc.)
-    tag_type: TagType,  // Normal (-), Dud (+), or Exclusive (*)
+    tag_type: TagType,  // Default (-), Dud (+), or Exception (*)
     name: String,       // The tag name
     alias: Option<String>, // Optional alias in parentheses
 }
 
 /// Parse tag type markers: -, +, *
-/// - Normal tags are marked with `-`
+/// - Default tags are marked with `-`
 /// - Dud tags are marked with `+` 
-/// - Exclusive tags are marked with `*` (changed from +- or -+)
+/// - Exception tags are marked with `*` (changed from +- or -+)
 fn parse_tag_type(input: &str) -> IResult<&str, TagType> {
     alt((
-        map(char('*'), |_| TagType::Exclusive),  // Changed from +- or -+ to *
+        map(char('*'), |_| TagType::Exception),  // Changed from +- or -+ to *
         map(char('+'), |_| TagType::Dud),
-        map(char('-'), |_| TagType::Normal),
+        map(char('-'), |_| TagType::Default),
     ))(input)
 }
 
@@ -343,12 +343,12 @@ pub fn parse_ents(file_path: &str) -> Result<TagsFile, Box<dyn Error>> {
     // Read the file contents
     let content = fs::read_to_string(file_path)?;
     
-    // Normalize line endings to \n for consistent parsing
+    // Defaultize line endings to \n for consistent parsing
     // This handles files created on different operating systems
-    let normalized_content = content.replace("\r\n", "\n").replace("\r", "\n");
+    let defaultized_content = content.replace("\r\n", "\n").replace("\r", "\n");
     
-    // Parse the normalized content
-    let (remaining, parsed_tags) = parse_ents_file(&normalized_content)
+    // Parse the defaultized content
+    let (remaining, parsed_tags) = parse_ents_file(&defaultized_content)
         .map_err(|e| format!("Parse error: {:?}", e))?;
     
     // Check if we parsed the entire file successfully
@@ -377,9 +377,9 @@ mod tests {
     /// Test parsing of different tag type markers
     #[test]
     fn test_parse_tag_type() {
-        assert_eq!(parse_tag_type("-").unwrap().1, TagType::Normal);
+        assert_eq!(parse_tag_type("-").unwrap().1, TagType::Default);
         assert_eq!(parse_tag_type("+").unwrap().1, TagType::Dud);
-        assert_eq!(parse_tag_type("*").unwrap().1, TagType::Exclusive); // Updated test
+        assert_eq!(parse_tag_type("*").unwrap().1, TagType::Exception); // Updated test
     }
     
     /// Test parsing of tag names with various terminators
@@ -404,18 +404,18 @@ mod tests {
         let input = "- jade\n";
         let (_, tag) = parse_tag_line(input).unwrap();
         assert_eq!(tag.indent, 0);
-        assert_eq!(tag.tag_type, TagType::Normal);
+        assert_eq!(tag.tag_type, TagType::Default);
         assert_eq!(tag.name, "jade");
         assert_eq!(tag.alias, None);
     }
     
-    /// Test parsing a tag with alias and new exclusive syntax
+    /// Test parsing a tag with alias and new exception syntax
     #[test]
     fn test_parse_tag_with_alias() {
         let input = "    * new york (ny)\n"; // Updated to use * instead of +-
         let (_, tag) = parse_tag_line(input).unwrap();
         assert_eq!(tag.indent, 1);
-        assert_eq!(tag.tag_type, TagType::Exclusive);
+        assert_eq!(tag.tag_type, TagType::Exception);
         assert_eq!(tag.name, "new york");
         assert_eq!(tag.alias, Some("ny".to_string()));
     }

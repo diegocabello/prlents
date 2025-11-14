@@ -5,12 +5,12 @@ use std::fs;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub enum TagType {
-    #[serde(rename = "normal")]
-    Normal,
+    #[serde(rename = "default")]
+    Default,
     #[serde(rename = "dud")]
     Dud,
-    #[serde(rename = "exclusive")]
-    Exclusive,
+    #[serde(rename = "exception")]
+    Exception,
 }
 
 // Unified tag structure for both parsing and serialization
