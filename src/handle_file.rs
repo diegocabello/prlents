@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::error::Error;
-use std::collections::hash_map::ExceptionHasher;
+use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use jwalk::WalkDir;
 use file_id::get_file_id;
@@ -14,7 +14,7 @@ fn get_file_identifier(path: &Path) -> Result<u64, Box<dyn Error>> {
     let file_id = get_file_id(path)?;
 
     // Hash the FileId to get a consistent u64
-    let mut hasher = ExceptionHasher::new();
+    let mut hasher = DefaultHasher::new();
     file_id.hash(&mut hasher);
     Ok(hasher.finish())
 }

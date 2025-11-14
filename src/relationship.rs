@@ -126,21 +126,22 @@ pub fn assign_bidir_file_tag_rel(
                     }
                 },
 
+                /* REMOVED: Exception tag type
                 TagType::Exception => {
                     let already_assigned_tags = single_inspect(tags_file, &file_inode_str)?;
                     let ancestry_set: HashSet<String> = foo.ancestry.iter().cloned().collect();
                     let common_elements: HashSet<_> = ancestry_set.intersection(&already_assigned_tags).cloned().collect();
-                    
+
                     if !common_elements.is_empty() {
                         // Check if any of the common ancestors are actually default tags
                         for ancestor_name in &common_elements {
                             // Find the ancestor tag and check its type
-                            if let Some(ancestor_tag) = tags_file.tags.iter().find(|t| 
+                            if let Some(ancestor_tag) = tags_file.tags.iter().find(|t|
                                 t.name == *ancestor_name && is_visible_tag(t)) {
-                                
+
                                 if ancestor_tag.tag_type == TagType::Default {
                                     if !force {
-                                        println!("cannot assign exception tag {} to file {} due to it having been assigned ancestor default tag {}", 
+                                        println!("cannot assign exception tag {} to file {} due to it having been assigned ancestor default tag {}",
                                             tag, file_name, ancestor_name);
                                         return Ok(());
                                     } else {
@@ -154,8 +155,9 @@ pub fn assign_bidir_file_tag_rel(
                         // If we get here, none of the ancestors are default tags, so assignment is allowed
                     }
                 }
+                */
             }
-            
+
             // Add file to tag's files if not already present
             let foo = &mut tags_file.tags[foo_index];
             let files = foo.files.get_or_insert_with(Vec::new);
@@ -210,24 +212,23 @@ fn collect_tags_recursively(tag_name: &str, tags_file: &TagsFile)
     
     // Recursive helper function to collect tags
     fn edit_lists(
-        tag_object: &EntsTag, 
+        tag_object: &EntsTag,
         all_tags: &[EntsTag],
-        exception_and_duds_set: &mut HashSet<String>, 
+        exception_and_duds_set: &mut HashSet<String>,
         exception_tags_set: &mut HashSet<String>
     ) {
         // Verify tag type
-        if tag_object.tag_type != TagType::Exception && 
-           tag_object.tag_type != TagType::Dud && 
+        if tag_object.tag_type != TagType::Dud &&
            tag_object.tag_type != TagType::Default {
             println!("tag '{}' is of invalid type '{:?}'", tag_object.name, tag_object.tag_type);
             return;
         }
-        
+
         // Add to exception_and_duds_set
         exception_and_duds_set.insert(tag_object.name.clone());
-        
+
         // Add to exception_tags_set if applicable
-        if tag_object.tag_type == TagType::Exception || tag_object.tag_type == TagType::Default {
+        if tag_object.tag_type == TagType::Default {
             exception_tags_set.insert(tag_object.name.clone());
         }
         

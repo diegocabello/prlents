@@ -12,8 +12,8 @@ pub fn path_to_portable_string(path: &Path) -> String {
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub enum TagType {
-    #[serde(rename = "exception")]
-    Exception,
+    // #[serde(rename = "exception")]
+    // Exception,
     #[serde(rename = "dud")]
     Dud,
     #[serde(rename = "default")]
@@ -75,7 +75,7 @@ pub struct FileData {
     // pub fuzzy_hash: [u8; 70]
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Exception)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TagsFile {
     pub files: Vec<FileData>,
     pub aliases: HashMap<String, String>,
@@ -90,7 +90,11 @@ pub fn read_tags_from_json() -> Result<TagsFile, Box<dyn Error>> {
         },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             println!("Error: tags.json not found. Run 'prlents process tags.ents' to create it.");
-            Ok(TagsFile::exception())  
+            Ok(TagsFile {
+                files: Vec::new(),
+                aliases: HashMap::new(),
+                tags: Vec::new(),
+            })
         },
         Err(e) => Err(e.into())
     }

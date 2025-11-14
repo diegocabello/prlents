@@ -25,13 +25,6 @@ use relationship::{
 use eval_shell::print_shell_functions;
 use merge_tags::merge_tags;
 
-// // External C functions
-// extern "C" {
-//     fn print_bash_functions();
-//     fn print_zsh_functions();
-
-// }
-
 fn main() -> Result<(), Box<dyn Error>> {
     let raw_args: Vec<String> = env::args().collect();
     
