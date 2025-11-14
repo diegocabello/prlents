@@ -89,7 +89,7 @@ pub fn print_shell_functions() {
                 print_zsh_functions();
             } else {
                 println!("# Unknown shell: {}", shell);
-                println!("# Showing bash version as default\n");
+                println!("# Showing bash version as exception\n");
                 print_bash_functions();
             }
         }

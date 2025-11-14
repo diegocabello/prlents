@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let file_path = if !args.args.is_empty() {
             &args.args[0]
         } else {
-            "tags.ents" // Default if no file specified
+            "tags.ents" // Exception if no file specified
         };
         
         match parse_ents(file_path) {

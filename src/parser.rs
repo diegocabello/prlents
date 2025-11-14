@@ -18,20 +18,20 @@ use crate::common::{TagType, EntsTag, TagsFile};
 #[derive(Debug, Clone)]
 struct ParsedTag {
     indent: usize,      // Indentation level (0, 1, 2, etc.)
-    tag_type: TagType,  // Default (-), Dud (+), or Exception (*)
+    tag_type: TagType,  // Exception (-), Dud (+), or Default (*)
     name: String,       // The tag name
     alias: Option<String>, // Optional alias in parentheses
 }
 
 /// Parse tag type markers: -, +, *
-/// - Default tags are marked with `-`
+/// - Exception tags are marked with `-`
 /// - Dud tags are marked with `+` 
-/// - Exception tags are marked with `*` (changed from +- or -+)
+/// - Default tags are marked with `*` (changed from +- or -+)
 fn parse_tag_type(input: &str) -> IResult<&str, TagType> {
     alt((
-        map(char('*'), |_| TagType::Exception),  // Changed from +- or -+ to *
+        map(char('*'), |_| TagType::Default),  // Changed from +- or -+ to *
         map(char('+'), |_| TagType::Dud),
-        map(char('-'), |_| TagType::Default),
+        map(char('-'), |_| TagType::Exception),
     ))(input)
 }
 
@@ -307,7 +307,7 @@ fn build_hierarchy(parsed_tags: Vec<ParsedTag>) -> (Vec<EntsTag>, HashMap<String
             tag_type: parsed_tag.tag_type,
             children: Vec::new(),     // Will be populated as we process children
             ancestry,
-            show: Some(true),         // New tags are visible by default
+            show: Some(true),         // New tags are visible by exception
             files: None,              // Set to None to match expected JSON output
             child_tags: Vec::new(),   // Temporary field used during parsing
             alias: parsed_tag.alias,
@@ -343,12 +343,12 @@ pub fn parse_ents(file_path: &str) -> Result<TagsFile, Box<dyn Error>> {
     // Read the file contents
     let content = fs::read_to_string(file_path)?;
     
-    // Defaultize line endings to \n for consistent parsing
+    // Exceptionize line endings to \n for consistent parsing
     // This handles files created on different operating systems
-    let defaultized_content = content.replace("\r\n", "\n").replace("\r", "\n");
+    let exceptionized_content = content.replace("\r\n", "\n").replace("\r", "\n");
     
-    // Parse the defaultized content
-    let (remaining, parsed_tags) = parse_ents_file(&defaultized_content)
+    // Parse the exceptionized content
+    let (remaining, parsed_tags) = parse_ents_file(&exceptionized_content)
         .map_err(|e| format!("Parse error: {:?}", e))?;
     
     // Check if we parsed the entire file successfully
@@ -377,9 +377,9 @@ mod tests {
     /// Test parsing of different tag type markers
     #[test]
     fn test_parse_tag_type() {
-        assert_eq!(parse_tag_type("-").unwrap().1, TagType::Default);
+        assert_eq!(parse_tag_type("-").unwrap().1, TagType::Exception);
         assert_eq!(parse_tag_type("+").unwrap().1, TagType::Dud);
-        assert_eq!(parse_tag_type("*").unwrap().1, TagType::Exception); // Updated test
+        assert_eq!(parse_tag_type("*").unwrap().1, TagType::Default); // Updated test
     }
     
     /// Test parsing of tag names with various terminators
@@ -404,18 +404,18 @@ mod tests {
         let input = "- jade\n";
         let (_, tag) = parse_tag_line(input).unwrap();
         assert_eq!(tag.indent, 0);
-        assert_eq!(tag.tag_type, TagType::Default);
+        assert_eq!(tag.tag_type, TagType::Exception);
         assert_eq!(tag.name, "jade");
         assert_eq!(tag.alias, None);
     }
     
-    /// Test parsing a tag with alias and new exception syntax
+    /// Test parsing a tag with alias and new default syntax
     #[test]
     fn test_parse_tag_with_alias() {
         let input = "    * new york (ny)\n"; // Updated to use * instead of +-
         let (_, tag) = parse_tag_line(input).unwrap();
         assert_eq!(tag.indent, 1);
-        assert_eq!(tag.tag_type, TagType::Exception);
+        assert_eq!(tag.tag_type, TagType::Default);
         assert_eq!(tag.name, "new york");
         assert_eq!(tag.alias, Some("ny".to_string()));
     }

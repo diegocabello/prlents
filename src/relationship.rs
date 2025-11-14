@@ -68,7 +68,7 @@ pub fn assign_bidir_file_tag_rel(
                     return Ok(());
                 },
 
-                TagType::Exception => {
+                TagType::Default => {
                     let already_assigned_tags = single_inspect(tags_file, &file_inode_str)?;
                     let (_, potential_children_tags) = collect_tags_recursively(tag, tags_file)?;
                     let ancestry_set: HashSet<String> = foo.ancestry.iter().cloned().collect();
@@ -76,21 +76,21 @@ pub fn assign_bidir_file_tag_rel(
                     let alt_common_elements: HashSet<_> = already_assigned_tags.intersection(&ancestry_set).cloned().collect();
 
                     if !alt_common_elements.is_empty() {
-                        // Check if any of the common ancestors are actually exception tags
+                        // Check if any of the common ancestors are actually default tags
                         for ancestor_name in &alt_common_elements {
                             // Find the ancestor tag and check its type
                             if let Some(ancestor_tag) = tags_file.tags.iter().find(|t| 
                                 t.name == *ancestor_name && is_visible_tag(t)) {
                                 
-                                if ancestor_tag.tag_type == TagType::Exception {
+                                if ancestor_tag.tag_type == TagType::Default {
                                     if !force {
-                                        println!("cannot assign exception tag {} to file {} due to it having been assigned ancestor exception tag {}", 
+                                        println!("cannot assign default tag {} to file {} due to it having been assigned ancestor default tag {}", 
                                             tag, file_name, ancestor_name);
                                         return Ok(());
                                     } else {
                                         //NEEDS CUSTOM MESSAGE
                                         assign_bidir_file_tag_rel(file_name, ancestor_name, Operation::Remove, tags_file, false)?;
-                                        unassign_message = format!("and forcefully unassigned ancestor exception tag {}", ancestor_name);
+                                        unassign_message = format!("and forcefully unassigned ancestor default tag {}", ancestor_name);
                                     }
                                 }
                             }
@@ -108,7 +108,7 @@ pub fn assign_bidir_file_tag_rel(
                                 println!("pre-exist file, tag: \t{} \t{}", file_name, display_tag_name);
                                 return Ok(()) 
                             } else {
-                                println!("cannot assign exception tag {} to file {} due to children {}", 
+                                println!("cannot assign default tag {} to file {} due to children {}", 
                                     tag, file_name, print_elements_str);
                                 return Ok(());
                             }
@@ -126,32 +126,32 @@ pub fn assign_bidir_file_tag_rel(
                     }
                 },
 
-                TagType::Default => {
+                TagType::Exception => {
                     let already_assigned_tags = single_inspect(tags_file, &file_inode_str)?;
                     let ancestry_set: HashSet<String> = foo.ancestry.iter().cloned().collect();
                     let common_elements: HashSet<_> = ancestry_set.intersection(&already_assigned_tags).cloned().collect();
                     
                     if !common_elements.is_empty() {
-                        // Check if any of the common ancestors are actually exception tags
+                        // Check if any of the common ancestors are actually default tags
                         for ancestor_name in &common_elements {
                             // Find the ancestor tag and check its type
                             if let Some(ancestor_tag) = tags_file.tags.iter().find(|t| 
                                 t.name == *ancestor_name && is_visible_tag(t)) {
                                 
-                                if ancestor_tag.tag_type == TagType::Exception {
+                                if ancestor_tag.tag_type == TagType::Default {
                                     if !force {
-                                        println!("cannot assign default tag {} to file {} due to it having been assigned ancestor exception tag {}", 
+                                        println!("cannot assign exception tag {} to file {} due to it having been assigned ancestor default tag {}", 
                                             tag, file_name, ancestor_name);
                                         return Ok(());
                                     } else {
                                         //NEEDS CUSTOM MESSAGE
-                                        unassign_message = format!("and forcefully unassigned ancestor exception tag {}", ancestor_name);
+                                        unassign_message = format!("and forcefully unassigned ancestor default tag {}", ancestor_name);
                                         assign_bidir_file_tag_rel(file_name, ancestor_name, Operation::Remove, tags_file, false)?;
                                     }
                                 }
                             }
                         }
-                        // If we get here, none of the ancestors are exception tags, so assignment is allowed
+                        // If we get here, none of the ancestors are default tags, so assignment is allowed
                     }
                 }
             }
@@ -205,64 +205,64 @@ fn collect_tags_recursively(tag_name: &str, tags_file: &TagsFile)
         .find(|t| t.name == display_tag_name && is_visible_tag(t))
         .ok_or_else(|| format!("tag '{}' is not in tags", tag_name))?;
     
-    let mut default_and_duds_set = HashSet::new();
-    let mut default_tags_set = HashSet::new();
+    let mut exception_and_duds_set = HashSet::new();
+    let mut exception_tags_set = HashSet::new();
     
     // Recursive helper function to collect tags
     fn edit_lists(
         tag_object: &EntsTag, 
         all_tags: &[EntsTag],
-        default_and_duds_set: &mut HashSet<String>, 
-        default_tags_set: &mut HashSet<String>
+        exception_and_duds_set: &mut HashSet<String>, 
+        exception_tags_set: &mut HashSet<String>
     ) {
         // Verify tag type
-        if tag_object.tag_type != TagType::Default && 
+        if tag_object.tag_type != TagType::Exception && 
            tag_object.tag_type != TagType::Dud && 
-           tag_object.tag_type != TagType::Exception {
+           tag_object.tag_type != TagType::Default {
             println!("tag '{}' is of invalid type '{:?}'", tag_object.name, tag_object.tag_type);
             return;
         }
         
-        // Add to default_and_duds_set
-        default_and_duds_set.insert(tag_object.name.clone());
+        // Add to exception_and_duds_set
+        exception_and_duds_set.insert(tag_object.name.clone());
         
-        // Add to default_tags_set if applicable
-        if tag_object.tag_type == TagType::Default || tag_object.tag_type == TagType::Exception {
-            default_tags_set.insert(tag_object.name.clone());
+        // Add to exception_tags_set if applicable
+        if tag_object.tag_type == TagType::Exception || tag_object.tag_type == TagType::Default {
+            exception_tags_set.insert(tag_object.name.clone());
         }
         
         // Process children recursively
         for child_name in &tag_object.children {
             if let Some(child_object) = all_tags.iter()
                 .find(|t| t.name == *child_name && is_visible_tag(t)) {
-                edit_lists(child_object, all_tags, default_and_duds_set, default_tags_set);
+                edit_lists(child_object, all_tags, exception_and_duds_set, exception_tags_set);
             }
         }
     }
     
     // Start the recursive collection
-    edit_lists(tag_obj, &tags_file.tags, &mut default_and_duds_set, &mut default_tags_set);
+    edit_lists(tag_obj, &tags_file.tags, &mut exception_and_duds_set, &mut exception_tags_set);
     
-    Ok((default_and_duds_set, default_tags_set))
+    Ok((exception_and_duds_set, exception_tags_set))
 }
 
 
 pub fn filter_command(tags_file: &mut TagsFile, tags: &[String], explicit: bool) -> Result<Vec<String>, Box<dyn Error>> {
     
-    let mut all_default_tags = HashSet::new();
+    let mut all_exception_tags = HashSet::new();
     
     for tag in tags {
         if !explicit {
-            let (_, default_tags_set) = collect_tags_recursively(tag, tags_file)?;
-            all_default_tags.extend(default_tags_set);
+            let (_, exception_tags_set) = collect_tags_recursively(tag, tags_file)?;
+            all_exception_tags.extend(exception_tags_set);
         } else {
-            all_default_tags.extend(tags.iter().cloned());
+            all_exception_tags.extend(tags.iter().cloned());
         }
     }
     
     let mut unique_inodes = HashSet::new();
 
-    for tag_name in &all_default_tags {
+    for tag_name in &all_exception_tags {
         if let Some(tag_obj) = tags_file.tags.iter()
             .find(|tag| tag.name == *tag_name && is_visible_tag(tag)) {
             if let Some(files) = &tag_obj.files {
