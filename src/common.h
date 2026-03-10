@@ -1,7 +1,6 @@
 #ifndef COMMON_H
 #define COMMON_H
 
-#include "cJSON.h"
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -93,8 +92,8 @@ void am_free(AliasMap *am);
 /* TagsFile */
 void tags_file_init(TagsFile *tf);
 void tags_file_free(TagsFile *tf);
-int  read_tags_from_json(TagsFile *tf);
-int  save_tags_to_json(const TagsFile *tf);
+int  read_tags_bin(TagsFile *tf);
+int  save_tags_bin(const TagsFile *tf);
 
 /* Utility */
 const char *tag_type_str(TagType t);

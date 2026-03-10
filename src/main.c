@@ -9,6 +9,7 @@
 #include "relationship.h"
 #include "eval_shell.h"
 #include "merge_tags.h"
+#include "migrate.h"
 
 int main(int argc, char **argv) {
     /* check for --eval-shell before anything else */
@@ -61,68 +62,50 @@ int main(int argc, char **argv) {
         TagsFile tf;
         if (parse_ents(file_path, &tf) != 0) return 1;
 
-        char *json_str = NULL;
-        {
-            /* serialize to JSON string for merge_tags */
-            cJSON *root = cJSON_CreateObject();
-
-            cJSON *aliases_obj = cJSON_CreateObject();
-            for (int i = 0; i < tf.aliases.count; i++)
-                cJSON_AddStringToObject(aliases_obj, tf.aliases.items[i].key, tf.aliases.items[i].value);
-            cJSON_AddItemToObject(root, "aliases", aliases_obj);
-
-            cJSON *tags_arr = cJSON_CreateArray();
-            for (int i = 0; i < tf.tags.count; i++) {
-                const EntsTag *tag = &tf.tags.items[i];
-                cJSON *tobj = cJSON_CreateObject();
-                cJSON_AddStringToObject(tobj, "name", tag->name);
-                cJSON_AddStringToObject(tobj, "type", tag_type_str(tag->tag_type));
-
-                cJSON *children = cJSON_CreateArray();
-                for (int c = 0; c < tag->children.count; c++)
-                    cJSON_AddItemToArray(children, cJSON_CreateString(tag->children.items[c]));
-                cJSON_AddItemToObject(tobj, "children", children);
-
-                cJSON *ancestry = cJSON_CreateArray();
-                for (int a = 0; a < tag->ancestry.count; a++)
-                    cJSON_AddItemToArray(ancestry, cJSON_CreateString(tag->ancestry.items[a]));
-                cJSON_AddItemToObject(tobj, "ancestry", ancestry);
-
-                cJSON_AddTrueToObject(tobj, "show");
-                cJSON_AddNullToObject(tobj, "files");
-
-                cJSON_AddItemToArray(tags_arr, tobj);
-            }
-            cJSON_AddItemToObject(root, "tags", tags_arr);
-
-            json_str = cJSON_Print(root);
-            cJSON_Delete(root);
-        }
-
-        /* check if tags.json exists */
-        FILE *check = fopen("tags.json", "r");
+        /* check if tags.dtob exists */
+        FILE *check = fopen("tags.dtob", "r");
         if (!check) {
-            /* write directly */
-            FILE *out = fopen("tags.json", "w");
-            if (out) {
-                fputs(json_str, out);
-                fputc('\n', out);
-                fclose(out);
+            /* no existing file, save directly */
+            if (save_tags_bin(&tf) != 0) {
+                tags_file_free(&tf);
+                return 1;
             }
         } else {
             fclose(check);
-            merge_tags(json_str, "tags.json");
+            if (merge_tags(&tf) != 0) {
+                tags_file_free(&tf);
+                return 1;
+            }
         }
 
-        free(json_str);
-        printf("Successfully parsed %s and saved to tags.json\n", file_path);
+        printf("Successfully parsed %s and saved to tags.dtob\n", file_path);
         tags_file_free(&tf);
         return 0;
     }
 
-    /* ---- commands that need tags.json ---- */
+    /* ---- migrate ---- */
+    if (strcmp(command, "migrate") == 0) {
+        const char *json_path = arg_count > 0 ? args[0] : "tags.json";
+
+        TagsFile tf;
+        if (read_tags_from_json(json_path, &tf) != 0) return 1;
+
+        printf("Read %d tags, %d files, %d aliases from %s\n",
+               tf.tags.count, tf.files.count, tf.aliases.count, json_path);
+
+        if (save_tags_bin(&tf) != 0) {
+            tags_file_free(&tf);
+            return 1;
+        }
+
+        printf("Migrated to tags.dtob\n");
+        tags_file_free(&tf);
+        return 0;
+    }
+
+    /* ---- commands that need tags.dtob ---- */
     TagsFile tf;
-    if (read_tags_from_json(&tf) != 0) return 1;
+    if (read_tags_bin(&tf) != 0) return 1;
 
     /* ---- filter / union ---- */
     if (strcmp(command, "filter") == 0 || strcmp(command, "fil") == 0 ||
@@ -232,7 +215,7 @@ int main(int argc, char **argv) {
             } else {
                 for (int i = 0; i < extra_count; i++)
                     assign_bidir_file_tag_rel(extra[i], monad, op, &tf, flag_force);
-                save_tags_to_json(&tf);
+                save_tags_bin(&tf);
             }
 
         } else {
@@ -252,7 +235,7 @@ int main(int argc, char **argv) {
 
             for (int i = 0; i < extra_count; i++)
                 assign_bidir_file_tag_rel(monad, extra[i], op, &tf, flag_force);
-            save_tags_to_json(&tf);
+            save_tags_bin(&tf);
         }
 
     } else {

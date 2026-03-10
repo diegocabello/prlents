@@ -355,7 +355,7 @@ int filter_command(TagsFile *tf, const char **tags, int tag_count,
         }
     }
 
-    if (needs_save) save_tags_to_json(tf);
+    if (needs_save) save_tags_bin(tf);
 
     return 0;
 }
