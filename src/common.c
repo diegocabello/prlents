@@ -199,8 +199,18 @@ TagType tag_type_from_str(const char *s) {
 /* ---- DTOB format ---- */
 
 #include "dtob.h"
+#include "json.h"
 
 #define TAGS_DTOB_FILE "tags.dtob"
+
+/* custom type codes */
+#define ENTS_NAME     (DTOB_CUSTOM_MIN + 0)  /* 20 - raw */
+#define ENTS_TRUE     (DTOB_CUSTOM_MIN + 1)  /* 21 - nullable */
+#define ENTS_FALSE    (DTOB_CUSTOM_MIN + 2)  /* 22 - nullable */
+#define ENTS_SHOW     (DTOB_CUSTOM_MIN + 3)  /* 23 - true|false */
+#define ENTS_DEFAULT  (DTOB_CUSTOM_MIN + 4)  /* 24 - nullable */
+#define ENTS_DUD      (DTOB_CUSTOM_MIN + 5)  /* 25 - nullable */
+#define ENTS_TAG_TYPE (DTOB_CUSTOM_MIN + 6)  /* 26 - default|dud */
 
 #define REL_MODE_SPARSE_POS 0
 #define REL_MODE_MATRIX     1
@@ -210,24 +220,26 @@ TagType tag_type_from_str(const char *s) {
 static DtobValue *sa_to_dtob(const StringArray *sa) {
     DtobValue *arr = dtob_array();
     for (int i = 0; i < sa->count; i++)
-        dtob_array_push(arr, dtob_string(sa->items[i], strlen(sa->items[i])));
+        dtob_array_push(arr, json_string(sa->items[i], strlen(sa->items[i])));
     return arr;
 }
 
-/* Extract a string from a DtobValue (caller must free) */
+/* Extract string from DtobValue (STRING or CUSTOM with string data). Caller frees. */
 static char *dtob_val_to_str(const DtobValue *v) {
-    if (!v || v->type != DTOB_STRING || !v->data) return strdup("");
+    if (!v || !v->data) return strdup("");
+    if (v->type != JSON_STRING && v->type != DTOB_CUSTOM) return strdup("");
     char *s = malloc(v->data_len + 1);
     memcpy(s, v->data, v->data_len);
     s[v->data_len] = '\0';
     return s;
 }
 
-/* Extract uint64 from a DtobValue INT */
+/* Extract uint64 from DtobValue (INT or CUSTOM with uint64 data, big-endian) */
 static uint64_t dtob_val_to_u64(const DtobValue *v) {
-    if (!v || v->type != DTOB_INT || !v->data) return 0;
+    if (!v || !v->data) return 0;
+    if (v->type != DTOB_INT && v->type != DTOB_CUSTOM) return 0;
     uint64_t val = 0;
-    for (size_t i = 0; i < v->data_len; i++)
+    for (size_t i = 0; i < v->data_len && i < 8; i++)
         val = (val << 8) | v->data[i];
     return val;
 }
@@ -242,6 +254,54 @@ static DtobValue *dtob_kv_get(const DtobValue *kv, const char *key) {
             return kv->pairs[i].value;
     }
     return NULL;
+}
+
+/* Build the prlents types header */
+/* file field codes */
+#define ENTS_INODE    (ENTS_TAG_TYPE + 1)      /* 27 - uint64 */
+#define ENTS_PARENT   (ENTS_TAG_TYPE + 2)      /* 28 - uint64 */
+
+static void build_ents_types(DtobTypesHeader *th) {
+    dtob_types_init(th);
+    uint8_t op_raw[]      = { DTOB_CODE_RAW };
+    uint8_t op_uint64[]   = { DTOB_CODE_UINT64 };
+    uint8_t op_show[]     = { ENTS_TRUE, ENTS_FALSE };
+    uint8_t op_tag_type[] = { ENTS_DEFAULT, ENTS_DUD };
+    dtob_types_add(th, ENTS_NAME,     "name",     op_raw,      1);
+    dtob_types_add(th, ENTS_TRUE,     "true",     NULL,        0);
+    dtob_types_add(th, ENTS_FALSE,    "false",    NULL,        0);
+    dtob_types_add(th, ENTS_SHOW,     "show",     op_show,     2);
+    dtob_types_add(th, ENTS_DEFAULT,  "default",  NULL,        0);
+    dtob_types_add(th, ENTS_DUD,      "dud",      NULL,        0);
+    dtob_types_add(th, ENTS_TAG_TYPE, "tag_type", op_tag_type, 2);
+    dtob_types_add(th, ENTS_INODE,    "inode",    op_uint64,   1);
+    dtob_types_add(th, ENTS_PARENT,   "parent",   op_uint64,   1);
+}
+
+/* Create a custom name value (raw data) */
+static DtobValue *ents_name(const char *str) {
+    size_t len = str ? strlen(str) : 0;
+    DtobValue *v = dtob_custom(ENTS_NAME, (const uint8_t *)(str ? str : ""), len);
+    v->inner_code = DTOB_CODE_RAW;
+    return v;
+}
+
+/* Create a custom inode value (uint64, big-endian) */
+static DtobValue *ents_inode(uint64_t val) {
+    uint8_t bytes[8];
+    for (int i = 7; i >= 0; i--) { bytes[i] = val & 0xFF; val >>= 8; }
+    DtobValue *v = dtob_custom(ENTS_INODE, bytes, 8);
+    v->inner_code = DTOB_CODE_UINT64;
+    return v;
+}
+
+/* Create a custom parent value (uint64 inode, big-endian) */
+static DtobValue *ents_parent(uint64_t inode) {
+    uint8_t bytes[8];
+    for (int i = 7; i >= 0; i--) { bytes[i] = inode & 0xFF; inode >>= 8; }
+    DtobValue *v = dtob_custom(ENTS_PARENT, bytes, 8);
+    v->inner_code = DTOB_CODE_UINT64;
+    return v;
 }
 
 /* Read StringArray from a dtob array of strings */
@@ -320,7 +380,7 @@ static DtobValue *build_rel_subtree(const TagsFile *tf) {
     DtobValue *kv = dtob_kvset();
     const char *mode_str = mode == REL_MODE_SPARSE_POS ? "pos" :
                            mode == REL_MODE_MATRIX ? "matrix" : "neg";
-    dtob_kvset_put(kv, "rel_mode", dtob_string(mode_str, strlen(mode_str)));
+    dtob_kvset_put(kv, "rel_mode", json_string(mode_str, strlen(mode_str)));
 
     if (mode == REL_MODE_SPARSE_POS || mode == REL_MODE_SPARSE_NEG) {
         int raw_count = 0;
@@ -383,61 +443,46 @@ static DtobValue *build_rel_subtree(const TagsFile *tf) {
     return kv;
 }
 
-/* Write a uint64 LE value into the writer */
-static void write_uint64(DtobWriter *w, uint64_t val) {
-    DtobValue *v = dtob_uint(val);
-    dtob_writer_value(w, v);
-    dtob_free(v);
-}
-
 int save_tags_bin(const TagsFile *tf) {
+    /* build types header */
+    DtobTypesHeader types;
+    build_ents_types(&types);
+
     /* ---- build subtrees ---- */
 
     /* aliases */
     DtobValue *aliases_kv = dtob_kvset();
     for (int i = 0; i < tf->aliases.count; i++)
         dtob_kvset_put(aliases_kv, tf->aliases.items[i].key,
-                       dtob_string(tf->aliases.items[i].value,
+                       json_string(tf->aliases.items[i].value,
                                    strlen(tf->aliases.items[i].value)));
 
-    /* tags */
+    /* tags — array of arrays: [name, show, tag_type, children, ancestry] */
     DtobValue *tags_arr = dtob_array();
     for (int i = 0; i < tf->tags.count; i++) {
         const EntsTag *tag = &tf->tags.items[i];
-        DtobValue *t = dtob_kvset();
-        dtob_kvset_put(t, "n", dtob_string(tag->name ? tag->name : "",
-                                            tag->name ? strlen(tag->name) : 0));
-        uint8_t tcode = (uint8_t)(DTOB_CUSTOM_MIN + tag->tag_type);
-        DtobValue *tv = dtob_custom(tcode, NULL, 0);
-        t->elements = realloc(t->elements, (t->num_elements + 1) * sizeof(DtobValue *));
-        t->elements[t->num_elements++] = tv;
-        dtob_kvset_put(t, "s", tag->show ? dtob_true() : dtob_false());
-        dtob_kvset_put(t, "c", sa_to_dtob(&tag->children));
-        dtob_kvset_put(t, "a", sa_to_dtob(&tag->ancestry));
+        DtobValue *t = dtob_array();
+        dtob_array_push(t, ents_name(tag->name));
+        /* show: custom type wrapping true/false custom types */
+        {
+            DtobValue *sv = dtob_custom(ENTS_SHOW, NULL, 0);
+            sv->inner_code = tag->show ? ENTS_TRUE : ENTS_FALSE;
+            dtob_array_push(t, sv);
+        }
+        /* tag_type: custom type wrapping nullable default/dud */
+        {
+            uint8_t ttcode = (tag->tag_type == TAG_TYPE_DUD) ? ENTS_DUD : ENTS_DEFAULT;
+            DtobValue *tv = dtob_custom(ENTS_TAG_TYPE, NULL, 0);
+            tv->inner_code = ttcode;
+            dtob_array_push(t, tv);
+        }
+        dtob_array_push(t, sa_to_dtob(&tag->children));
+        dtob_array_push(t, sa_to_dtob(&tag->ancestry));
         dtob_array_push(tags_arr, t);
     }
 
     /* relationships */
     DtobValue *rel_kv = build_rel_subtree(tf);
-
-    /* collect unique folder inodes (parent_dir_inode values) */
-    uint64_t *folders = NULL;
-    int n_folders = 0;
-    int *folder_idx = malloc(tf->files.count * sizeof(int)); /* per-file index into folders */
-
-    for (int i = 0; i < tf->files.count; i++) {
-        uint64_t pdi = tf->files.items[i].parent_dir_inode;
-        int found = -1;
-        for (int j = 0; j < n_folders; j++) {
-            if (folders[j] == pdi) { found = j; break; }
-        }
-        if (found < 0) {
-            found = n_folders;
-            folders = realloc(folders, (size_t)(n_folders + 1) * sizeof(uint64_t));
-            folders[n_folders++] = pdi;
-        }
-        folder_idx[i] = found;
-    }
 
     /* ---- build encoded stream with DtobWriter ---- */
     DtobWriter w;
@@ -445,14 +490,16 @@ int save_tags_bin(const TagsFile *tf) {
 
     /* types header */
     dtob_writer_ctrl(&w, DTOB_CODE_OPEN);
-    dtob_writer_ctrl(&w, DTOB_CUSTOM_MIN + TAG_TYPE_DEFAULT);
-    dtob_writer_data(&w, (const uint8_t *)"default", 7);
-    dtob_writer_ctrl(&w, DTOB_CUSTOM_MIN + TAG_TYPE_DUD);
-    dtob_writer_data(&w, (const uint8_t *)"dud", 3);
-    dtob_writer_ctrl(&w, DTOB_CODE_TYPES_CLOSE);
-
-    /* root kvset open */
     dtob_writer_ctrl(&w, DTOB_CODE_OPEN);
+    for (size_t i = 0; i < types.count; i++) {
+        if (i > 0) dtob_writer_ctrl(&w, DTOB_CODE_SEP);
+        dtob_writer_ctrl(&w, types.entries[i].code);
+        dtob_writer_data(&w, (const uint8_t *)types.entries[i].name,
+                         strlen(types.entries[i].name));
+        for (size_t j = 0; j < types.entries[i].n_opcodes; j++)
+            dtob_writer_ctrl(&w, types.entries[i].opcodes[j]);
+    }
+    dtob_writer_ctrl(&w, DTOB_CODE_TYPES_CLOSE);
 
     /* "aliases" */
     dtob_writer_data(&w, (const uint8_t *)"aliases", 7);
@@ -464,23 +511,10 @@ int save_tags_bin(const TagsFile *tf) {
     dtob_writer_ctrl(&w, DTOB_CODE_SEP);
     dtob_writer_data(&w, (const uint8_t *)"tags", 4);
     dtob_writer_ctrl(&w, DTOB_CODE_SEP);
-    dtob_writer_value(&w, tags_arr);
+    dtob_writer_value_typed(&w, tags_arr, &types);
     dtob_free(tags_arr);
 
-    /* "folders" — record byte offset of each inode */
-    size_t *folder_offsets = malloc((size_t)n_folders * sizeof(size_t));
-    dtob_writer_ctrl(&w, DTOB_CODE_SEP);
-    dtob_writer_data(&w, (const uint8_t *)"folders", 7);
-    dtob_writer_ctrl(&w, DTOB_CODE_SEP);
-    dtob_writer_ctrl(&w, DTOB_CODE_OPEN);
-    for (int i = 0; i < n_folders; i++) {
-        if (i > 0) dtob_writer_ctrl(&w, DTOB_CODE_SEP);
-        folder_offsets[i] = w.pos;
-        write_uint64(&w, folders[i]);
-    }
-    dtob_writer_ctrl(&w, DTOB_CODE_ARR_CLOSE);
-
-    /* "files" — use jump_4 for "p" */
+    /* "files" — array of arrays: [name, inode, parent] */
     dtob_writer_ctrl(&w, DTOB_CODE_SEP);
     dtob_writer_data(&w, (const uint8_t *)"files", 5);
     dtob_writer_ctrl(&w, DTOB_CODE_SEP);
@@ -490,30 +524,27 @@ int save_tags_bin(const TagsFile *tf) {
         if (i > 0) dtob_writer_ctrl(&w, DTOB_CODE_SEP);
 
         dtob_writer_ctrl(&w, DTOB_CODE_OPEN);
-        /* "n" */
-        dtob_writer_data(&w, (const uint8_t *)"n", 1);
+        /* name */
+        {
+            DtobValue *nv = ents_name(fd->last_known_name);
+            dtob_writer_value_typed(&w, nv, &types);
+            dtob_free(nv);
+        }
+        /* inode */
         dtob_writer_ctrl(&w, DTOB_CODE_SEP);
         {
-            DtobValue *ns = dtob_string(fd->last_known_name ? fd->last_known_name : "",
-                                         fd->last_known_name ? strlen(fd->last_known_name) : 0);
-            dtob_writer_value(&w, ns);
-            dtob_free(ns);
+            DtobValue *iv = ents_inode(fd->file_inode);
+            dtob_writer_value_typed(&w, iv, &types);
+            dtob_free(iv);
         }
-        /* "i" — inline uint64 */
-        dtob_writer_ctrl(&w, DTOB_CODE_SEP);
-        dtob_writer_data(&w, (const uint8_t *)"i", 1);
-        dtob_writer_ctrl(&w, DTOB_CODE_SEP);
-        write_uint64(&w, fd->file_inode);
-        /* "p" — jump_4 pointer to folders array */
-        dtob_writer_ctrl(&w, DTOB_CODE_SEP);
-        dtob_writer_data(&w, (const uint8_t *)"p", 1);
+        /* parent dir inode */
         dtob_writer_ctrl(&w, DTOB_CODE_SEP);
         {
-            DtobValue *ptr = dtob_pointer4((uint32_t)folder_offsets[folder_idx[i]]);
-            dtob_writer_value(&w, ptr);
-            dtob_free(ptr);
+            DtobValue *pv = ents_parent(fd->parent_dir_inode);
+            dtob_writer_value_typed(&w, pv, &types);
+            dtob_free(pv);
         }
-        dtob_writer_ctrl(&w, DTOB_CODE_KV_CLOSE);
+        dtob_writer_ctrl(&w, DTOB_CODE_ARR_CLOSE);
     }
     dtob_writer_ctrl(&w, DTOB_CODE_ARR_CLOSE);
 
@@ -529,9 +560,9 @@ int save_tags_bin(const TagsFile *tf) {
     /* root kvset close */
     dtob_writer_ctrl(&w, DTOB_CODE_KV_CLOSE);
 
-    free(folders);
-    free(folder_offsets);
-    free(folder_idx);
+    /* free types header names */
+    for (size_t i = 0; i < types.count; i++)
+        free(types.entries[i].name);
 
     /* write to file */
     FILE *fp = fopen(TAGS_DTOB_FILE, "wb");
@@ -592,44 +623,43 @@ int read_tags_bin(TagsFile *tf) {
         }
     }
 
-    /* tags */
+    /* tags — array of arrays: [name, show, tag_type, children, ancestry] */
     DtobValue *tags_arr = dtob_kv_get(root, "tags");
     if (tags_arr && tags_arr->type == DTOB_ARRAY) {
         for (size_t i = 0; i < tags_arr->num_elements; i++) {
             DtobValue *te = tags_arr->elements[i];
-            if (te->type != DTOB_KV_SET) continue;
+            if (te->type != DTOB_ARRAY || te->num_elements < 5) continue;
             EntsTag *tag = ta_push(&tf->tags);
-            tag->name = dtob_val_to_str(dtob_kv_get(te, "n"));
-            /* tag_type from custom typed element (bare, no key) */
+            /* [0] name (custom string) */
+            tag->name = dtob_val_to_str(te->elements[0]);
+            /* [1] show (custom wrapping true/false) */
+            DtobValue *sv = te->elements[1];
+            tag->show = (sv->type == DTOB_CUSTOM && sv->inner_code == ENTS_TRUE);
+            /* [2] tag_type (custom wrapping default/dud) */
+            DtobValue *ttv = te->elements[2];
             tag->tag_type = TAG_TYPE_DEFAULT;
-            for (size_t ei = 0; ei < te->num_elements; ei++) {
-                if (te->elements[ei]->type == DTOB_CUSTOM) {
-                    tag->tag_type = (TagType)(te->elements[ei]->custom_code - DTOB_CUSTOM_MIN);
-                    break;
-                }
-            }
-            DtobValue *sv = dtob_kv_get(te, "s");
-            tag->show = (sv && sv->type == DTOB_TRUE);
-            dtob_arr_to_sa(dtob_kv_get(te, "c"), &tag->children);
-            dtob_arr_to_sa(dtob_kv_get(te, "a"), &tag->ancestry);
+            if (ttv->type == DTOB_CUSTOM && ttv->inner_code == ENTS_DUD)
+                tag->tag_type = TAG_TYPE_DUD;
+            /* [3] children, [4] ancestry */
+            dtob_arr_to_sa(te->elements[3], &tag->children);
+            dtob_arr_to_sa(te->elements[4], &tag->ancestry);
             tag->has_files = false;
         }
     }
 
-    /* files */
+    /* files — array of arrays: [name, inode, parent] */
     DtobValue *files_arr = dtob_kv_get(root, "files");
     if (files_arr && files_arr->type == DTOB_ARRAY) {
         for (size_t i = 0; i < files_arr->num_elements; i++) {
             DtobValue *fe = files_arr->elements[i];
-            if (fe->type != DTOB_KV_SET) continue;
+            if (fe->type != DTOB_ARRAY || fe->num_elements < 3) continue;
             FileData *fd = fda_push(&tf->files);
-            fd->last_known_name = dtob_val_to_str(dtob_kv_get(fe, "n"));
-            fd->file_inode = dtob_val_to_u64(dtob_kv_get(fe, "i"));
-            DtobValue *pv = dtob_kv_get(fe, "p");
-            if (pv && pv->type == DTOB_POINTER && pv->num_elements > 0)
-                fd->parent_dir_inode = dtob_val_to_u64(pv->elements[0]);
-            else
-                fd->parent_dir_inode = dtob_val_to_u64(pv);
+            /* [0] name (custom string) */
+            fd->last_known_name = dtob_val_to_str(fe->elements[0]);
+            /* [1] inode (custom uint64) */
+            fd->file_inode = dtob_val_to_u64(fe->elements[1]);
+            /* [2] parent dir inode (custom uint64) */
+            fd->parent_dir_inode = dtob_val_to_u64(fe->elements[2]);
         }
     }
 
@@ -651,7 +681,6 @@ int read_tags_bin(TagsFile *tf) {
                     apply_rel(tf, ti, fi);
                 }
             } else {
-                /* negative: all pairs exist EXCEPT these */
                 int nt = tf->tags.count, nf = tf->files.count;
                 uint32_t *neg_set = malloc(n_pairs * sizeof(uint32_t));
                 for (size_t i = 0; i < n_pairs; i++) {
@@ -673,7 +702,6 @@ int read_tags_bin(TagsFile *tf) {
             }
         }
     } else {
-        /* matrix mode */
         DtobValue *mat = dtob_kv_get(root, "rel_matrix");
         uint16_t nf = (uint16_t)dtob_val_to_u64(dtob_kv_get(root, "rel_cols"));
         uint16_t nt = (uint16_t)dtob_val_to_u64(dtob_kv_get(root, "rel_rows"));
