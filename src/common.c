@@ -260,6 +260,7 @@ static DtobValue *dtob_kv_get(const DtobValue *kv, const char *key) {
 /* file field codes */
 #define ENTS_INODE    (ENTS_TAG_TYPE + 1)      /* 27 - uint64 */
 #define ENTS_PARENT   (ENTS_TAG_TYPE + 2)      /* 28 - uint64 */
+#define ENTS_FILE     (ENTS_TAG_TYPE + 3)      /* 29 - struct(name, inode, parent) */
 
 static void build_ents_types(DtobTypesHeader *th) {
     dtob_types_init(th);
@@ -267,6 +268,7 @@ static void build_ents_types(DtobTypesHeader *th) {
     uint8_t op_uint64[]   = { DTOB_CODE_UINT64 };
     uint8_t op_show[]     = { ENTS_TRUE, ENTS_FALSE };
     uint8_t op_tag_type[] = { ENTS_DEFAULT, ENTS_DUD };
+    uint8_t op_file[]     = { ENTS_NAME, ENTS_INODE, ENTS_PARENT };
     dtob_types_add(th, ENTS_NAME,     "name",     op_raw,      1);
     dtob_types_add(th, ENTS_TRUE,     "true",     NULL,        0);
     dtob_types_add(th, ENTS_FALSE,    "false",    NULL,        0);
@@ -276,6 +278,8 @@ static void build_ents_types(DtobTypesHeader *th) {
     dtob_types_add(th, ENTS_TAG_TYPE, "tag_type", op_tag_type, 2);
     dtob_types_add(th, ENTS_INODE,    "inode",    op_uint64,   1);
     dtob_types_add(th, ENTS_PARENT,   "parent",   op_uint64,   1);
+    dtob_types_add(th, ENTS_FILE,     "file",     op_file,     3);
+    th->entries[th->count - 1].is_struct = 1;
 }
 
 /* Create a custom name value (raw data) */
@@ -301,6 +305,15 @@ static DtobValue *ents_parent(uint64_t inode) {
     for (int i = 7; i >= 0; i--) { bytes[i] = inode & 0xFF; inode >>= 8; }
     DtobValue *v = dtob_custom(ENTS_PARENT, bytes, 8);
     v->inner_code = DTOB_CODE_UINT64;
+    return v;
+}
+
+/* Create a file struct value (name + inode + parent_inode) */
+static DtobValue *ents_file(const char *name, uint64_t inode, uint64_t parent_inode) {
+    DtobValue *v = dtob_custom(ENTS_FILE, NULL, 0);
+    dtob_custom_push(v, ents_name(name));
+    dtob_custom_push(v, ents_inode(inode));
+    dtob_custom_push(v, ents_parent(parent_inode));
     return v;
 }
 
@@ -488,71 +501,50 @@ int save_tags_bin(const TagsFile *tf) {
     DtobWriter w;
     dtob_writer_init(&w);
 
-    /* types header */
+    /* types header: OPEN { OPEN code name opcodes CLOSE_KV|CLOSE_ARR } TYPES_CLOSE */
     dtob_writer_ctrl(&w, DTOB_CODE_OPEN);
     dtob_writer_ctrl(&w, DTOB_CODE_OPEN);
     for (size_t i = 0; i < types.count; i++) {
-        if (i > 0) dtob_writer_ctrl(&w, DTOB_CODE_SEP);
+        dtob_writer_ctrl(&w, DTOB_CODE_OPEN);
         dtob_writer_ctrl(&w, types.entries[i].code);
         dtob_writer_data(&w, (const uint8_t *)types.entries[i].name,
                          strlen(types.entries[i].name));
         for (size_t j = 0; j < types.entries[i].n_opcodes; j++)
             dtob_writer_ctrl(&w, types.entries[i].opcodes[j]);
+        dtob_writer_ctrl(&w, types.entries[i].is_struct ? DTOB_CODE_ARR_CLOSE
+                                                       : DTOB_CODE_KV_CLOSE);
     }
     dtob_writer_ctrl(&w, DTOB_CODE_TYPES_CLOSE);
 
     /* "aliases" */
+    dtob_writer_ctrl(&w, DTOB_CODE_RAW);
     dtob_writer_data(&w, (const uint8_t *)"aliases", 7);
-    dtob_writer_ctrl(&w, DTOB_CODE_SEP);
     dtob_writer_value(&w, aliases_kv);
     dtob_free(aliases_kv);
 
     /* "tags" */
-    dtob_writer_ctrl(&w, DTOB_CODE_SEP);
+    dtob_writer_ctrl(&w, DTOB_CODE_RAW);
     dtob_writer_data(&w, (const uint8_t *)"tags", 4);
-    dtob_writer_ctrl(&w, DTOB_CODE_SEP);
     dtob_writer_value_typed(&w, tags_arr, &types);
     dtob_free(tags_arr);
 
-    /* "files" — array of arrays: [name, inode, parent] */
-    dtob_writer_ctrl(&w, DTOB_CODE_SEP);
+    /* "files" — array of file structs */
+    dtob_writer_ctrl(&w, DTOB_CODE_RAW);
     dtob_writer_data(&w, (const uint8_t *)"files", 5);
-    dtob_writer_ctrl(&w, DTOB_CODE_SEP);
     dtob_writer_ctrl(&w, DTOB_CODE_OPEN);
     for (int i = 0; i < tf->files.count; i++) {
         const FileData *fd = &tf->files.items[i];
-        if (i > 0) dtob_writer_ctrl(&w, DTOB_CODE_SEP);
-
-        dtob_writer_ctrl(&w, DTOB_CODE_OPEN);
-        /* name */
-        {
-            DtobValue *nv = ents_name(fd->last_known_name);
-            dtob_writer_value_typed(&w, nv, &types);
-            dtob_free(nv);
-        }
-        /* inode */
-        dtob_writer_ctrl(&w, DTOB_CODE_SEP);
-        {
-            DtobValue *iv = ents_inode(fd->file_inode);
-            dtob_writer_value_typed(&w, iv, &types);
-            dtob_free(iv);
-        }
-        /* parent dir inode */
-        dtob_writer_ctrl(&w, DTOB_CODE_SEP);
-        {
-            DtobValue *pv = ents_parent(fd->parent_dir_inode);
-            dtob_writer_value_typed(&w, pv, &types);
-            dtob_free(pv);
-        }
-        dtob_writer_ctrl(&w, DTOB_CODE_ARR_CLOSE);
+        DtobValue *fv = ents_file(fd->last_known_name, fd->file_inode,
+                                   fd->parent_dir_inode);
+        dtob_writer_value_typed(&w, fv, &types);
+        dtob_free(fv);
     }
     dtob_writer_ctrl(&w, DTOB_CODE_ARR_CLOSE);
 
     /* relationship fields (inline from rel_kv subtree) */
     for (size_t i = 0; i < rel_kv->num_pairs; i++) {
-        dtob_writer_ctrl(&w, DTOB_CODE_SEP);
+        dtob_writer_ctrl(&w, DTOB_CODE_RAW);
         dtob_writer_data(&w, rel_kv->pairs[i].key, rel_kv->pairs[i].key_len);
-        dtob_writer_ctrl(&w, DTOB_CODE_SEP);
         dtob_writer_value(&w, rel_kv->pairs[i].value);
     }
     dtob_free(rel_kv);
@@ -647,18 +639,15 @@ int read_tags_bin(TagsFile *tf) {
         }
     }
 
-    /* files — array of arrays: [name, inode, parent] */
+    /* files — array of file structs (elements: [name, inode, parent]) */
     DtobValue *files_arr = dtob_kv_get(root, "files");
     if (files_arr && files_arr->type == DTOB_ARRAY) {
         for (size_t i = 0; i < files_arr->num_elements; i++) {
             DtobValue *fe = files_arr->elements[i];
-            if (fe->type != DTOB_ARRAY || fe->num_elements < 3) continue;
+            if (fe->type != DTOB_CUSTOM || fe->num_elements < 3) continue;
             FileData *fd = fda_push(&tf->files);
-            /* [0] name (custom string) */
             fd->last_known_name = dtob_val_to_str(fe->elements[0]);
-            /* [1] inode (custom uint64) */
             fd->file_inode = dtob_val_to_u64(fe->elements[1]);
-            /* [2] parent dir inode (custom uint64) */
             fd->parent_dir_inode = dtob_val_to_u64(fe->elements[2]);
         }
     }
