@@ -199,6 +199,7 @@ TagType tag_type_from_str(const char *s) {
 /* ---- DTOB format ---- */
 
 #include "dtob.h"
+#include "dtob_types.h"
 #include "json.h"
 
 #define TAGS_DTOB_FILE "tags.dtob"
@@ -224,37 +225,6 @@ static DtobValue *sa_to_dtob(const StringArray *sa) {
     return arr;
 }
 
-/* Extract string from DtobValue (STRING or CUSTOM with string data). Caller frees. */
-static char *dtob_val_to_str(const DtobValue *v) {
-    if (!v || !v->data) return strdup("");
-    if (v->type != JSON_STRING && v->type != DTOB_CUSTOM) return strdup("");
-    char *s = malloc(v->data_len + 1);
-    memcpy(s, v->data, v->data_len);
-    s[v->data_len] = '\0';
-    return s;
-}
-
-/* Extract uint64 from DtobValue (INT or CUSTOM with uint64 data, big-endian) */
-static uint64_t dtob_val_to_u64(const DtobValue *v) {
-    if (!v || !v->data) return 0;
-    if (v->type != DTOB_INT && v->type != DTOB_CUSTOM) return 0;
-    uint64_t val = 0;
-    for (size_t i = 0; i < v->data_len && i < 8; i++)
-        val = (val << 8) | v->data[i];
-    return val;
-}
-
-/* Find a KV pair by key string */
-static DtobValue *dtob_kv_get(const DtobValue *kv, const char *key) {
-    if (!kv || kv->type != DTOB_KV_SET) return NULL;
-    size_t klen = strlen(key);
-    for (size_t i = 0; i < kv->num_pairs; i++) {
-        if (kv->pairs[i].key_len == klen &&
-            memcmp(kv->pairs[i].key, key, klen) == 0)
-            return kv->pairs[i].value;
-    }
-    return NULL;
-}
 
 /* Build the prlents types header */
 /* file field codes */
@@ -262,25 +232,18 @@ static DtobValue *dtob_kv_get(const DtobValue *kv, const char *key) {
 #define ENTS_PARENT   (ENTS_TAG_TYPE + 2)      /* 28 - uint64 */
 #define ENTS_FILE     (ENTS_TAG_TYPE + 3)      /* 29 - struct(name, inode, parent) */
 
-static void build_ents_types(DtobTypesHeader *th) {
-    dtob_types_init(th);
-    uint8_t op_raw[]      = { DTOB_CODE_RAW };
-    uint8_t op_uint64[]   = { DTOB_CODE_UINT64 };
-    uint8_t op_show[]     = { ENTS_TRUE, ENTS_FALSE };
-    uint8_t op_tag_type[] = { ENTS_DEFAULT, ENTS_DUD };
-    uint8_t op_file[]     = { ENTS_NAME, ENTS_INODE, ENTS_PARENT };
-    dtob_types_add(th, ENTS_NAME,     "name",     op_raw,      1);
-    dtob_types_add(th, ENTS_TRUE,     "true",     NULL,        0);
-    dtob_types_add(th, ENTS_FALSE,    "false",    NULL,        0);
-    dtob_types_add(th, ENTS_SHOW,     "show",     op_show,     2);
-    dtob_types_add(th, ENTS_DEFAULT,  "default",  NULL,        0);
-    dtob_types_add(th, ENTS_DUD,      "dud",      NULL,        0);
-    dtob_types_add(th, ENTS_TAG_TYPE, "tag_type", op_tag_type, 2);
-    dtob_types_add(th, ENTS_INODE,    "inode",    op_uint64,   1);
-    dtob_types_add(th, ENTS_PARENT,   "parent",   op_uint64,   1);
-    dtob_types_add(th, ENTS_FILE,     "file",     op_file,     3);
-    th->entries[th->count - 1].is_struct = 1;
-}
+DTOB_DEFINE_CUSTOM_TYPES(ents, th,
+    DTOB_CUSTOM_TYPE_RAW     (th, ENTS_NAME,     "name")
+    DTOB_CUSTOM_TYPE_NULLABLE(th, ENTS_TRUE,     "true")
+    DTOB_CUSTOM_TYPE_NULLABLE(th, ENTS_FALSE,    "false")
+    DTOB_CUSTOM_TYPE_ENUM    (th, ENTS_SHOW,     "show",     ENTS_TRUE, ENTS_FALSE)
+    DTOB_CUSTOM_TYPE_NULLABLE(th, ENTS_DEFAULT,  "default")
+    DTOB_CUSTOM_TYPE_NULLABLE(th, ENTS_DUD,      "dud")
+    DTOB_CUSTOM_TYPE_ENUM    (th, ENTS_TAG_TYPE, "tag_type", ENTS_DEFAULT, ENTS_DUD)
+    DTOB_CUSTOM_TYPE_UINT64  (th, ENTS_INODE,    "inode")
+    DTOB_CUSTOM_TYPE_UINT64  (th, ENTS_PARENT,   "parent")
+    DTOB_CUSTOM_TYPE_STRUCT  (th, ENTS_FILE,     "file",     ENTS_NAME, ENTS_INODE, ENTS_PARENT)
+)
 
 /* Create a custom name value (raw data) */
 static DtobValue *ents_name(const char *str) {
@@ -321,9 +284,9 @@ static DtobValue *ents_file(const char *name, uint64_t inode, uint64_t parent_in
 static void dtob_arr_to_sa(const DtobValue *arr, StringArray *sa) {
     if (!arr || arr->type != DTOB_ARRAY) return;
     for (size_t i = 0; i < arr->num_elements; i++) {
-        char *s = dtob_val_to_str(arr->elements[i]);
+        char s[4096];
+        dtob_val_to_str(arr->elements[i], s, sizeof(s));
         sa_push(sa, s);
-        free(s);
     }
 }
 
@@ -459,7 +422,7 @@ static DtobValue *build_rel_subtree(const TagsFile *tf) {
 int save_tags_bin(const TagsFile *tf) {
     /* build types header */
     DtobTypesHeader types;
-    build_ents_types(&types);
+    build_ents_custom_types(&types);
 
     /* ---- build subtrees ---- */
 
@@ -500,6 +463,10 @@ int save_tags_bin(const TagsFile *tf) {
     /* ---- build encoded stream with DtobWriter ---- */
     DtobWriter w;
     dtob_writer_init(&w);
+
+    /* magic number */
+    for (int i = 0; i < DTOB_MAGIC_LEN; i++)
+        dtob_writer_byte(&w, (uint8_t)DTOB_MAGIC[i]);
 
     /* types header: OPEN { OPEN code name opcodes CLOSE_KV|CLOSE_ARR } TYPES_CLOSE */
     dtob_writer_ctrl(&w, DTOB_CODE_OPEN);
@@ -569,6 +536,16 @@ int save_tags_bin(const TagsFile *tf) {
     return 0;
 }
 
+/* Read uint64 from a DTOB_INT or DTOB_CUSTOM value (big-endian bytes) */
+static uint64_t ents_read_u64(const DtobValue *v) {
+    if (!v || !v->data || v->data_len == 0) return 0;
+    if (v->type != DTOB_INT && v->type != DTOB_CUSTOM) return 0;
+    uint64_t val = 0;
+    for (size_t i = 0; i < v->data_len; i++)
+        val = (val << 8) | v->data[i];
+    return val;
+}
+
 /* ---- DTOB read ---- */
 
 int read_tags_bin(TagsFile *tf) {
@@ -602,28 +579,28 @@ int read_tags_bin(TagsFile *tf) {
     }
 
     /* aliases */
-    DtobValue *aliases_kv = dtob_kv_get(root, "aliases");
+    DtobValue *aliases_kv = dtob_kvset_get(root, "aliases");
     if (aliases_kv && aliases_kv->type == DTOB_KV_SET) {
         for (size_t i = 0; i < aliases_kv->num_pairs; i++) {
             char *key = malloc(aliases_kv->pairs[i].key_len + 1);
             memcpy(key, aliases_kv->pairs[i].key, aliases_kv->pairs[i].key_len);
             key[aliases_kv->pairs[i].key_len] = '\0';
-            char *val = dtob_val_to_str(aliases_kv->pairs[i].value);
+            char val[4096];
+            dtob_val_to_str(aliases_kv->pairs[i].value, val, sizeof(val));
             am_put(&tf->aliases, key, val);
             free(key);
-            free(val);
         }
     }
 
     /* tags — array of arrays: [name, show, tag_type, children, ancestry] */
-    DtobValue *tags_arr = dtob_kv_get(root, "tags");
+    DtobValue *tags_arr = dtob_kvset_get(root, "tags");
     if (tags_arr && tags_arr->type == DTOB_ARRAY) {
         for (size_t i = 0; i < tags_arr->num_elements; i++) {
             DtobValue *te = tags_arr->elements[i];
             if (te->type != DTOB_ARRAY || te->num_elements < 5) continue;
             EntsTag *tag = ta_push(&tf->tags);
             /* [0] name (custom string) */
-            tag->name = dtob_val_to_str(te->elements[0]);
+            { char _buf[4096]; dtob_val_to_str(te->elements[0], _buf, sizeof(_buf)); tag->name = strdup(_buf); }
             /* [1] show (custom wrapping true/false) */
             DtobValue *sv = te->elements[1];
             tag->show = (sv->type == DTOB_CUSTOM && sv->inner_code == ENTS_TRUE);
@@ -640,27 +617,27 @@ int read_tags_bin(TagsFile *tf) {
     }
 
     /* files — array of file structs (elements: [name, inode, parent]) */
-    DtobValue *files_arr = dtob_kv_get(root, "files");
+    DtobValue *files_arr = dtob_kvset_get(root, "files");
     if (files_arr && files_arr->type == DTOB_ARRAY) {
         for (size_t i = 0; i < files_arr->num_elements; i++) {
             DtobValue *fe = files_arr->elements[i];
             if (fe->type != DTOB_CUSTOM || fe->num_elements < 3) continue;
             FileData *fd = fda_push(&tf->files);
-            fd->last_known_name = dtob_val_to_str(fe->elements[0]);
-            fd->file_inode = dtob_val_to_u64(fe->elements[1]);
-            fd->parent_dir_inode = dtob_val_to_u64(fe->elements[2]);
+            { char _buf[4096]; dtob_val_to_str(fe->elements[0], _buf, sizeof(_buf)); fd->last_known_name = strdup(_buf); }
+            fd->file_inode = ents_read_u64(fe->elements[1]);
+            fd->parent_dir_inode = ents_read_u64(fe->elements[2]);
         }
     }
 
     /* relationships */
-    char *mode_str = dtob_val_to_str(dtob_kv_get(root, "rel_mode"));
+    char mode_str[64];
+    dtob_val_to_str(dtob_kvset_get(root, "rel_mode"), mode_str, sizeof(mode_str));
     int mode = REL_MODE_SPARSE_POS;
     if (strcmp(mode_str, "matrix") == 0) mode = REL_MODE_MATRIX;
     else if (strcmp(mode_str, "neg") == 0) mode = REL_MODE_SPARSE_NEG;
-    free(mode_str);
 
     if (mode == REL_MODE_SPARSE_POS || mode == REL_MODE_SPARSE_NEG) {
-        DtobValue *raw = dtob_kv_get(root, "rel_pairs");
+        DtobValue *raw = dtob_kvset_get(root, "rel_pairs");
         if (raw && raw->type == DTOB_RAW && raw->data) {
             size_t n_pairs = raw->data_len / 4;
             if (mode == REL_MODE_SPARSE_POS) {
@@ -691,9 +668,9 @@ int read_tags_bin(TagsFile *tf) {
             }
         }
     } else {
-        DtobValue *mat = dtob_kv_get(root, "rel_matrix");
-        uint16_t nf = (uint16_t)dtob_val_to_u64(dtob_kv_get(root, "rel_cols"));
-        uint16_t nt = (uint16_t)dtob_val_to_u64(dtob_kv_get(root, "rel_rows"));
+        DtobValue *mat = dtob_kvset_get(root, "rel_matrix");
+        uint16_t nf = (uint16_t)dtob_kvset_uint(root, "rel_cols");
+        uint16_t nt = (uint16_t)dtob_kvset_uint(root, "rel_rows");
         if (mat && mat->type == DTOB_RAW && mat->data && nf > 0) {
             for (int t = 0; t < nt && t < tf->tags.count; t++) {
                 for (int f = 0; f < nf && f < tf->files.count; f++) {
