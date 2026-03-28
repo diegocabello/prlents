@@ -200,7 +200,6 @@ TagType tag_type_from_str(const char *s) {
 
 #include "dtob.h"
 #include "dtob_types.h"
-#include "json.h"
 
 #define TAGS_DTOB_FILE "tags.dtob"
 
@@ -221,7 +220,7 @@ TagType tag_type_from_str(const char *s) {
 static DtobValue *sa_to_dtob(const StringArray *sa) {
     DtobValue *arr = dtob_array();
     for (int i = 0; i < sa->count; i++)
-        dtob_array_push(arr, json_string(sa->items[i], strlen(sa->items[i])));
+        dtob_array_push(arr, dtob_raw((const uint8_t *)sa->items[i], strlen(sa->items[i])));
     return arr;
 }
 
@@ -356,7 +355,7 @@ static DtobValue *build_rel_subtree(const TagsFile *tf) {
     DtobValue *kv = dtob_kvset();
     const char *mode_str = mode == REL_MODE_SPARSE_POS ? "pos" :
                            mode == REL_MODE_MATRIX ? "matrix" : "neg";
-    dtob_kvset_put(kv, "rel_mode", json_string(mode_str, strlen(mode_str)));
+    dtob_kvset_put(kv, "rel_mode", dtob_raw((const uint8_t *)mode_str, strlen(mode_str)));
 
     if (mode == REL_MODE_SPARSE_POS || mode == REL_MODE_SPARSE_NEG) {
         int raw_count = 0;
@@ -430,7 +429,7 @@ int save_tags_bin(const TagsFile *tf) {
     DtobValue *aliases_kv = dtob_kvset();
     for (int i = 0; i < tf->aliases.count; i++)
         dtob_kvset_put(aliases_kv, tf->aliases.items[i].key,
-                       json_string(tf->aliases.items[i].value,
+                       dtob_raw((const uint8_t *)tf->aliases.items[i].value,
                                    strlen(tf->aliases.items[i].value)));
 
     /* tags — array of arrays: [name, show, tag_type, children, ancestry] */
@@ -553,9 +552,9 @@ int read_tags_bin(TagsFile *tf) {
 
     FILE *fp = fopen(TAGS_DTOB_FILE, "rb");
     if (!fp) {
-        printf("Error: %s not found. Run 'prlents process tags.ents' to create it.\n",
+        fprintf(stderr, "Error: %s not found. Run 'prlents process tags.ents' to create it.\n",
                TAGS_DTOB_FILE);
-        return 0;
+        return -1;
     }
 
     fseek(fp, 0, SEEK_END);
