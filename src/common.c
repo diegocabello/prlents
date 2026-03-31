@@ -470,6 +470,12 @@ int fast_patch_relations(const TagsFile *tf) {
 
     /* Compile target boundary mathematical key bytes */
     uint8_t *target_trits = NULL;
+    if (rel_kv->num_pairs == 0) {
+        free(scan_buf);
+        fclose(fp); free(w.buf); dtob_free(rel_kv);
+        for (size_t i = 0; i < types.count; i++) free(types.entries[i].name);
+        return 0;
+    }
     size_t target_len = dtob_trit_encode(rel_kv->pairs[0].key, rel_kv->pairs[0].key_len, &target_trits);
     
     long boundary_offset = -1;
@@ -492,20 +498,16 @@ int fast_patch_relations(const TagsFile *tf) {
         return save_tags_bin(tf);
     }
 
-    /* 3. Mathematical File Truncation and Physical Patch! */
-#ifndef _WIN32
-    int fd = fileno(fp);
-    if (ftruncate(fd, boundary_offset) != 0) {
-        /* ignore error and hope fwrite overwrites perfectly, or fallback if file size was bigger */
-    }
-#endif
-
+    /* 3. Write new block then truncate to exact new end */
     fseek(fp, boundary_offset, SEEK_SET);
     if (fwrite(w.buf, 1, w.pos, fp) != w.pos) {
         fclose(fp); free(w.buf); dtob_free(rel_kv);
         for (size_t i = 0; i < types.count; i++) free(types.entries[i].name);
         return -1;
     }
+#ifndef _WIN32
+    (void)ftruncate(fileno(fp), boundary_offset + (long)w.pos);
+#endif
 
     /* Flush and natively dispose of memory resources perfectly! */
     fclose(fp);
