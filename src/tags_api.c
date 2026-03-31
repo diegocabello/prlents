@@ -99,6 +99,33 @@ char **prl_get_child_tag_files(const TagsFile *tf, const char *tag_name, int *ou
     return result;
 }
 
+static char **get_tag_files_direct(const TagsFile *tf, const char *tag_name, int *out_count) {
+    *out_count = 0;
+    int ti = prl_find_tag(tf, tag_name);
+    if (ti < 0) return NULL;
+
+    const EntsTag *tag = &tf->tags.items[ti];
+    if (!tag->has_files || tag->files.count == 0) return NULL;
+
+    char **result = malloc(tag->files.count * sizeof(char *));
+    int count = 0;
+
+    for (int i = 0; i < tag->files.count; i++) {
+        uint64_t inode = strtoull(tag->files.items[i], NULL, 10);
+        for (int f = 0; f < tf->files.count; f++) {
+            if (tf->files.items[f].file_inode == inode) {
+                const char *name = strip_dot_slash(tf->files.items[f].last_known_name);
+                result[count++] = strdup(name);
+                break;
+            }
+        }
+    }
+
+    *out_count = count;
+    if (count == 0) { free(result); return NULL; }
+    return result;
+}
+
 char **prl_get_parent_tag_files(const TagsFile *tf, const char *tag_name, int *out_count) {
     *out_count = 0;
     int ti = prl_find_tag(tf, tag_name);
@@ -109,7 +136,7 @@ char **prl_get_parent_tag_files(const TagsFile *tf, const char *tag_name, int *o
     if (tag->ancestry.count == 0) return NULL;
 
     const char *parent_name = tag->ancestry.items[tag->ancestry.count - 1];
-    return prl_get_tag_files(tf, parent_name, out_count);
+    return get_tag_files_direct(tf, parent_name, out_count);
 }
 
 int prl_set_tag_files(TagsFile *tf, const char *tag_name,
