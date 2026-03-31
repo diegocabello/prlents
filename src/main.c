@@ -215,7 +215,9 @@ int main(int argc, char **argv) {
             } else {
                 for (int i = 0; i < extra_count; i++)
                     assign_bidir_file_tag_rel(extra[i], monad, op, &tf, flag_force);
-                save_tags_bin(&tf);
+                
+                if (!tf.dirty_metadata) fast_patch_relations(&tf);
+                else save_tags_bin(&tf);
             }
 
         } else {
@@ -235,7 +237,9 @@ int main(int argc, char **argv) {
 
             for (int i = 0; i < extra_count; i++)
                 assign_bidir_file_tag_rel(monad, extra[i], op, &tf, flag_force);
-            save_tags_bin(&tf);
+            
+            if (!tf.dirty_metadata) fast_patch_relations(&tf);
+            else save_tags_bin(&tf);
         }
 
     } else {

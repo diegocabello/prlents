@@ -4,7 +4,7 @@ SRCDIR = src
 LIBDIR = lib
 OBJDIR = build
 
-DTOB_DIR = ../dtob-doc
+DTOB_DIR = ../dtob
 DTOB_LIB = $(DTOB_DIR)/libdtob.a
 DTOB_INC = $(DTOB_DIR)/lib
 
@@ -20,7 +20,7 @@ SRCS = $(SRCDIR)/main.c \
 
 OBJS = $(patsubst $(SRCDIR)/%.c,$(OBJDIR)/%.o,$(SRCS))
 LIB_OBJS = $(OBJDIR)/cjson/cJSON.o
-TARGET = prlents
+TARGET = ents 
 
 # Objects for libprlents.a (no main)
 LIB_SRCS = $(SRCDIR)/common.c \

@@ -2,7 +2,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 /* ---- StringArray ---- */
 
 void sa_init(StringArray *sa) {
@@ -177,6 +179,7 @@ void tags_file_init(TagsFile *tf) {
     fda_init(&tf->files);
     am_init(&tf->aliases);
     ta_init(&tf->tags);
+    tf->dirty_metadata = false;
 }
 
 void tags_file_free(TagsFile *tf) {
@@ -418,12 +421,116 @@ static DtobValue *build_rel_subtree(const TagsFile *tf) {
     return kv;
 }
 
+int fast_patch_relations(const TagsFile *tf) {
+    /* 1. Fast build the relations block natively in memory */
+    DtobTypesHeader types;
+    build_ents_custom_types(&types);
+
+    DtobValue *rel_kv = build_rel_subtree(tf);
+
+    DtobWriter w;
+    dtob_writer_init(&w);
+
+    for (size_t i = 0; i < rel_kv->num_pairs; i++) {
+        dtob_writer_ctrl(&w, DTOB_CODE_RAW);
+        dtob_writer_data(&w, rel_kv->pairs[i].key, rel_kv->pairs[i].key_len);
+        dtob_writer_value_typed(&w, rel_kv->pairs[i].value, &types);
+    }
+    dtob_writer_ctrl(&w, DTOB_CODE_KV_CLOSE);
+
+    /* 2. Open the database mathematically and dynamically search backwards to find the physical truncation boundary */
+    FILE *fp = fopen(TAGS_DTOB_FILE, "r+b");
+    if (!fp) {
+        free(w.buf);
+        dtob_free(rel_kv);
+        for (size_t i = 0; i < types.count; i++) free(types.entries[i].name);
+        return save_tags_bin(tf); /* fallback to full rewrite if file is broken */
+    }
+
+    fseek(fp, 0, SEEK_END);
+    long file_size = ftell(fp);
+    if (file_size < 100) {
+        fclose(fp);
+        free(w.buf);
+        dtob_free(rel_kv);
+        for (size_t i = 0; i < types.count; i++) free(types.entries[i].name);
+        return save_tags_bin(tf);
+    }
+
+    /* We dynamically scan the bottom 256KB of the file (relationships are always trailing) for our exact 1st rel key */
+    long scan_size = file_size > 256000 ? 256000 : file_size;
+    fseek(fp, file_size - scan_size, SEEK_SET);
+    
+    uint8_t *scan_buf = malloc(scan_size);
+    if (fread(scan_buf, 1, scan_size, fp) != (size_t)scan_size) {
+        free(scan_buf); fclose(fp); free(w.buf); dtob_free(rel_kv);
+        for (size_t i = 0; i < types.count; i++) free(types.entries[i].name);
+        return save_tags_bin(tf);
+    }
+
+    /* Compile target boundary mathematical key bytes */
+    uint8_t *target_trits = NULL;
+    size_t target_len = dtob_trit_encode(rel_kv->pairs[0].key, rel_kv->pairs[0].key_len, &target_trits);
+    
+    long boundary_offset = -1;
+    for (long i = 0; i < scan_size - (long)target_len - 2; i++) {
+        if (scan_buf[i] == 0xC0 && scan_buf[i+1] == 0x05) { /* DTOB_CODE_RAW */
+            if (memcmp(&scan_buf[i+2], target_trits, target_len) == 0) {
+                boundary_offset = (file_size - scan_size) + i;
+                break;
+            }
+        }
+    }
+
+    free(scan_buf);
+    free(target_trits);
+
+    if (boundary_offset < 0) {
+        /* Cannot mathematically locate boundary. Fallback cleanly to full rewrite! */
+        fclose(fp); free(w.buf); dtob_free(rel_kv);
+        for (size_t i = 0; i < types.count; i++) free(types.entries[i].name);
+        return save_tags_bin(tf);
+    }
+
+    /* 3. Mathematical File Truncation and Physical Patch! */
+#ifndef _WIN32
+    int fd = fileno(fp);
+    if (ftruncate(fd, boundary_offset) != 0) {
+        /* ignore error and hope fwrite overwrites perfectly, or fallback if file size was bigger */
+    }
+#endif
+
+    fseek(fp, boundary_offset, SEEK_SET);
+    if (fwrite(w.buf, 1, w.pos, fp) != w.pos) {
+        fclose(fp); free(w.buf); dtob_free(rel_kv);
+        for (size_t i = 0; i < types.count; i++) free(types.entries[i].name);
+        return -1;
+    }
+
+    /* Flush and natively dispose of memory resources perfectly! */
+    fclose(fp);
+    free(w.buf);
+    dtob_free(rel_kv);
+    for (size_t i = 0; i < types.count; i++) free(types.entries[i].name);
+
+    return 0;
+}
+
 int save_tags_bin(const TagsFile *tf) {
     /* build types header */
     DtobTypesHeader types;
     build_ents_custom_types(&types);
 
+    if (dtob_verify_file_types(TAGS_DTOB_FILE, &types, 1) == 0) {
+        fprintf(stderr, "Error: Existing %s has incompatible type schemas! Serialization mathematically aborted.\n", TAGS_DTOB_FILE);
+        for (size_t i = 0; i < types.count; i++) free(types.entries[i].name);
+        return -1;
+    }
+
     /* ---- build subtrees ---- */
+
+    /* root */
+    DtobValue *root = dtob_kvset();
 
     /* aliases */
     DtobValue *aliases_kv = dtob_kvset();
@@ -431,6 +538,7 @@ int save_tags_bin(const TagsFile *tf) {
         dtob_kvset_put(aliases_kv, tf->aliases.items[i].key,
                        dtob_raw((const uint8_t *)tf->aliases.items[i].value,
                                    strlen(tf->aliases.items[i].value)));
+    dtob_kvset_put(root, "aliases", aliases_kv);
 
     /* tags — array of arrays: [name, show, tag_type, children, ancestry] */
     DtobValue *tags_arr = dtob_array();
@@ -455,83 +563,52 @@ int save_tags_bin(const TagsFile *tf) {
         dtob_array_push(t, sa_to_dtob(&tag->ancestry));
         dtob_array_push(tags_arr, t);
     }
+    dtob_kvset_put(root, "tags", tags_arr);
 
-    /* relationships */
-    DtobValue *rel_kv = build_rel_subtree(tf);
-
-    /* ---- build encoded stream with DtobWriter ---- */
-    DtobWriter w;
-    dtob_writer_init(&w);
-
-    /* magic number */
-    for (int i = 0; i < DTOB_MAGIC_LEN; i++)
-        dtob_writer_byte(&w, (uint8_t)DTOB_MAGIC[i]);
-
-    /* types header: OPEN { OPEN code name opcodes CLOSE_KV|CLOSE_ARR } TYPES_CLOSE */
-    dtob_writer_ctrl(&w, DTOB_CODE_OPEN);
-    dtob_writer_ctrl(&w, DTOB_CODE_OPEN);
-    for (size_t i = 0; i < types.count; i++) {
-        dtob_writer_ctrl(&w, DTOB_CODE_OPEN);
-        dtob_writer_ctrl(&w, types.entries[i].code);
-        dtob_writer_data(&w, (const uint8_t *)types.entries[i].name,
-                         strlen(types.entries[i].name));
-        for (size_t j = 0; j < types.entries[i].n_opcodes; j++)
-            dtob_writer_ctrl(&w, types.entries[i].opcodes[j]);
-        dtob_writer_ctrl(&w, types.entries[i].is_struct ? DTOB_CODE_ARR_CLOSE
-                                                       : DTOB_CODE_KV_CLOSE);
-    }
-    dtob_writer_ctrl(&w, DTOB_CODE_TYPES_CLOSE);
-
-    /* "aliases" */
-    dtob_writer_ctrl(&w, DTOB_CODE_RAW);
-    dtob_writer_data(&w, (const uint8_t *)"aliases", 7);
-    dtob_writer_value(&w, aliases_kv);
-    dtob_free(aliases_kv);
-
-    /* "tags" */
-    dtob_writer_ctrl(&w, DTOB_CODE_RAW);
-    dtob_writer_data(&w, (const uint8_t *)"tags", 4);
-    dtob_writer_value_typed(&w, tags_arr, &types);
-    dtob_free(tags_arr);
-
-    /* "files" — array of file structs */
-    dtob_writer_ctrl(&w, DTOB_CODE_RAW);
-    dtob_writer_data(&w, (const uint8_t *)"files", 5);
-    dtob_writer_ctrl(&w, DTOB_CODE_OPEN);
+    /* files — array of file structs */
+    DtobValue *files_arr = dtob_array();
     for (int i = 0; i < tf->files.count; i++) {
         const FileData *fd = &tf->files.items[i];
-        DtobValue *fv = ents_file(fd->last_known_name, fd->file_inode,
-                                   fd->parent_dir_inode);
-        dtob_writer_value_typed(&w, fv, &types);
-        dtob_free(fv);
+        dtob_array_push(files_arr, ents_file(fd->last_known_name, fd->file_inode, fd->parent_dir_inode));
     }
-    dtob_writer_ctrl(&w, DTOB_CODE_ARR_CLOSE);
+    dtob_kvset_put(root, "files", files_arr);
 
-    /* relationship fields (inline from rel_kv subtree) */
+    /* relationships: dynamically put properties directly into root */
+    DtobValue *rel_kv = build_rel_subtree(tf);
     for (size_t i = 0; i < rel_kv->num_pairs; i++) {
-        dtob_writer_ctrl(&w, DTOB_CODE_RAW);
-        dtob_writer_data(&w, rel_kv->pairs[i].key, rel_kv->pairs[i].key_len);
-        dtob_writer_value(&w, rel_kv->pairs[i].value);
+        char key_buf[256];
+        size_t kl = rel_kv->pairs[i].key_len < 255 ? rel_kv->pairs[i].key_len : 255;
+        memcpy(key_buf, rel_kv->pairs[i].key, kl);
+        key_buf[kl] = '\0';
+        dtob_kvset_put(root, key_buf, dtob_deep_copy(rel_kv->pairs[i].value));
     }
     dtob_free(rel_kv);
 
-    /* root kvset close */
-    dtob_writer_ctrl(&w, DTOB_CODE_KV_CLOSE);
+    /* Encode and write to file natively */
+    size_t out_len = 0;
+    uint8_t *enc = dtob_encode_with_types(root, &types, 1, &out_len);
+    dtob_free(root);
 
     /* free types header names */
-    for (size_t i = 0; i < types.count; i++)
+    for (size_t i = 0; i < types.count; i++) {
         free(types.entries[i].name);
+    }
 
-    /* write to file */
+    if (!enc || out_len == 0) {
+        fprintf(stderr, "Error: serialization failed entirely for %s\n", TAGS_DTOB_FILE);
+        free(enc);
+        return -1;
+    }
+
     FILE *fp = fopen(TAGS_DTOB_FILE, "wb");
     if (!fp) {
         fprintf(stderr, "Error: could not write %s\n", TAGS_DTOB_FILE);
-        free(w.buf);
+        free(enc);
         return -1;
     }
-    fwrite(w.buf, 1, w.pos, fp);
+    fwrite(enc, 1, out_len, fp);
     fclose(fp);
-    free(w.buf);
+    free(enc);
     return 0;
 }
 

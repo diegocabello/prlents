@@ -61,6 +61,7 @@ typedef struct {
     FileDataArray files;
     AliasMap aliases;
     TagArray tags;
+    bool dirty_metadata;
 } TagsFile;
 
 /* StringArray */
@@ -94,6 +95,7 @@ void tags_file_init(TagsFile *tf);
 void tags_file_free(TagsFile *tf);
 int  read_tags_bin(TagsFile *tf);
 int  save_tags_bin(const TagsFile *tf);
+int  fast_patch_relations(const TagsFile *tf);
 
 /* Utility */
 const char *tag_type_str(TagType t);

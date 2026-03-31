@@ -108,6 +108,7 @@ uint64_t handle_file(const char *file_path, TagsFile *tf) {
                 tf->files.items[i].last_known_name = make_relative(norm);
                 tf->files.items[i].parent_dir_inode = parent_ino;
                 free(norm);
+                tf->dirty_metadata = true;
                 return file_ino;
             }
         }
@@ -118,6 +119,7 @@ uint64_t handle_file(const char *file_path, TagsFile *tf) {
         fd->file_inode = file_ino;
         fd->parent_dir_inode = parent_ino;
         free(norm);
+        tf->dirty_metadata = true;
         return file_ino;
     }
 
@@ -135,6 +137,7 @@ uint64_t handle_file(const char *file_path, TagsFile *tf) {
                 tf->files.items[i].last_known_name = portable_path(found_path);
                 tf->files.items[i].parent_dir_inode = found_parent;
                 free(norm);
+                tf->dirty_metadata = true;
                 return found_inode;
             }
         }
@@ -144,6 +147,7 @@ uint64_t handle_file(const char *file_path, TagsFile *tf) {
         fd->file_inode = found_inode;
         fd->parent_dir_inode = found_parent;
         free(norm);
+        tf->dirty_metadata = true;
         return found_inode;
     }
 
