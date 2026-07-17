@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    /* ---- migrate ---- */
+    /* ---- migrate (json → dtob) ---- */
     if (strcmp(command, "migrate") == 0) {
         const char *json_path = arg_count > 0 ? args[0] : "tags.json";
 
@@ -101,6 +101,12 @@ int main(int argc, char **argv) {
         printf("Migrated to tags.dtob\n");
         tags_file_free(&tf);
         return 0;
+    }
+
+    /* ---- migrate2 (old dtob magic → new dtob magic + re-encode) ---- */
+    if (strcmp(command, "migrate2") == 0) {
+        const char *dtob_path = arg_count > 0 ? args[0] : "tags.dtob";
+        return migrate_dtob_v2(dtob_path);
     }
 
     /* ---- commands that need tags.dtob ---- */

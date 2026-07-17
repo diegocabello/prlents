@@ -1,12 +1,11 @@
 CC = cc
-CFLAGS = -Wall -Wextra -O2 -std=c11
+PKG_CONFIG_PATH ?= $(HOME)/.local/lib/pkgconfig
+DTOB_CFLAGS = $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --cflags dtob)
+DTOB_LIBS   = $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs dtob)
+CFLAGS = -Wall -Wextra -O2 -std=c11 $(DTOB_CFLAGS)
 SRCDIR = src
 LIBDIR = lib
 OBJDIR = build
-
-DTOB_DIR = ../dtob
-DTOB_LIB = $(DTOB_DIR)/libdtob.a
-DTOB_INC = $(DTOB_DIR)/lib
 
 SRCS = $(SRCDIR)/main.c \
        $(SRCDIR)/common.c \
@@ -20,7 +19,7 @@ SRCS = $(SRCDIR)/main.c \
 
 OBJS = $(patsubst $(SRCDIR)/%.c,$(OBJDIR)/%.o,$(SRCS))
 LIB_OBJS = $(OBJDIR)/cjson/cJSON.o
-TARGET = ents 
+TARGET = ents
 
 # Objects for libprlents.a (no main)
 LIB_SRCS = $(SRCDIR)/common.c \
@@ -30,20 +29,17 @@ LIB_PRL_OBJS = $(patsubst $(SRCDIR)/%.c,$(OBJDIR)/%.o,$(LIB_SRCS))
 
 all: $(TARGET) libprlents.a
 
-$(TARGET): $(OBJS) $(LIB_OBJS) $(DTOB_LIB)
-	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LIB_OBJS) $(DTOB_LIB) -lm
+$(TARGET): $(OBJS) $(LIB_OBJS)
+	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LIB_OBJS) $(DTOB_LIBS)
 
 libprlents.a: $(LIB_PRL_OBJS)
 	ar rcs $@ $(LIB_PRL_OBJS)
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
-	$(CC) $(CFLAGS) -I$(SRCDIR) -I$(LIBDIR)/cjson -I$(DTOB_INC) -c $< -o $@
+	$(CC) $(CFLAGS) -I$(SRCDIR) -I$(LIBDIR)/cjson -c $< -o $@
 
 $(OBJDIR)/cjson/cJSON.o: $(LIBDIR)/cjson/cJSON.c | $(OBJDIR)/cjson
 	$(CC) $(CFLAGS) -c $< -o $@
-
-$(DTOB_LIB):
-	$(MAKE) -C $(DTOB_DIR) libdtob.a
 
 $(OBJDIR):
 	mkdir -p $(OBJDIR)
