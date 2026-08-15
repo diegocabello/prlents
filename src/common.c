@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -127,6 +128,17 @@ void fda_free(FileDataArray *fda) {
 
 /* ---- AliasMap ---- */
 
+bool ents_name_equal(const char *left, const char *right) {
+    if (!left || !right) return left == right;
+    while (*left && *right) {
+        if (tolower((unsigned char)*left) != tolower((unsigned char)*right))
+            return false;
+        left++;
+        right++;
+    }
+    return *left == *right;
+}
+
 void am_init(AliasMap *am) {
     am->items = NULL;
     am->count = 0;
@@ -136,7 +148,7 @@ void am_init(AliasMap *am) {
 void am_put(AliasMap *am, const char *key, const char *value) {
     /* overwrite if exists */
     for (int i = 0; i < am->count; i++) {
-        if (strcmp(am->items[i].key, key) == 0) {
+        if (ents_name_equal(am->items[i].key, key)) {
             free(am->items[i].value);
             am->items[i].value = strdup(value);
             return;
@@ -153,7 +165,7 @@ void am_put(AliasMap *am, const char *key, const char *value) {
 
 const char *am_get(const AliasMap *am, const char *key) {
     for (int i = 0; i < am->count; i++) {
-        if (strcmp(am->items[i].key, key) == 0) return am->items[i].value;
+        if (ents_name_equal(am->items[i].key, key)) return am->items[i].value;
     }
     return NULL;
 }

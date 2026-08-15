@@ -18,7 +18,7 @@ bool is_visible_tag(const EntsTag *tag) {
 /* Find a visible tag by name, return its index or -1 */
 static int find_tag_index(const TagsFile *tf, const char *name) {
     for (int i = 0; i < tf->tags.count; i++) {
-        if (tf->tags.items[i].name && strcmp(tf->tags.items[i].name, name) == 0
+        if (tf->tags.items[i].name && ents_name_equal(tf->tags.items[i].name, name)
             && is_visible_tag(&tf->tags.items[i])) {
             return i;
         }
@@ -173,7 +173,7 @@ int assign_bidir_file_tag_rel(const char *file_name, const char *tag,
 
         if (conflicts.count > 0) {
             if (!force) {
-                if (conflicts.count == 1 && strcmp(conflicts.items[0], display_tag) == 0) {
+                if (conflicts.count == 1 && ents_name_equal(conflicts.items[0], display_tag)) {
                     printf("pre-exist file, tag: \t%s \t%s\n", file_name, display_tag);
                     sa_free(&already_assigned);
                     sa_free(&all_set);

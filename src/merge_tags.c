@@ -55,7 +55,7 @@ int merge_tags(const TagsFile *new_tf) {
         /* look for this tag in existing to keep file associations */
         for (int e = 0; e < existing.tags.count; e++) {
             if (existing.tags.items[e].name &&
-                strcmp(existing.tags.items[e].name, nt->name) == 0) {
+                ents_name_equal(existing.tags.items[e].name, nt->name)) {
                 if (existing.tags.items[e].has_files) {
                     mt->has_files = true;
                     for (int f = 0; f < existing.tags.items[e].files.count; f++)
@@ -74,7 +74,7 @@ int merge_tags(const TagsFile *new_tf) {
         bool found = false;
         for (int n = 0; n < new_tf->tags.count; n++) {
             if (new_tf->tags.items[n].name &&
-                strcmp(new_tf->tags.items[n].name, et->name) == 0) {
+                ents_name_equal(new_tf->tags.items[n].name, et->name)) {
                 found = true;
                 break;
             }

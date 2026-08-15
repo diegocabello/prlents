@@ -98,6 +98,7 @@ int  save_tags_bin(const TagsFile *tf);
 int  fast_patch_relations(const TagsFile *tf);
 
 /* Utility */
+bool ents_name_equal(const char *left, const char *right);
 const char *tag_type_str(TagType t);
 TagType tag_type_from_str(const char *s);
 

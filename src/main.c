@@ -207,7 +207,7 @@ int main(int argc, char **argv) {
 
             int tidx = -1;
             for (int i = 0; i < tf.tags.count; i++) {
-                if (tf.tags.items[i].name && strcmp(tf.tags.items[i].name, display_tag) == 0
+                if (tf.tags.items[i].name && ents_name_equal(tf.tags.items[i].name, display_tag)
                     && is_visible_tag(&tf.tags.items[i])) {
                     tidx = i;
                     break;

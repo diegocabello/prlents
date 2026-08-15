@@ -12,14 +12,14 @@ static const char *strip_dot_slash(const char *path) {
 
 int prl_find_tag(const TagsFile *tf, const char *tag_name) {
     for (int i = 0; i < tf->tags.count; i++) {
-        if (strcmp(tf->tags.items[i].name, tag_name) == 0)
+        if (ents_name_equal(tf->tags.items[i].name, tag_name))
             return i;
     }
     /* try resolving as alias */
     const char *real_name = am_get(&tf->aliases, tag_name);
     if (real_name) {
         for (int i = 0; i < tf->tags.count; i++) {
-            if (strcmp(tf->tags.items[i].name, real_name) == 0)
+            if (ents_name_equal(tf->tags.items[i].name, real_name))
                 return i;
         }
     }
